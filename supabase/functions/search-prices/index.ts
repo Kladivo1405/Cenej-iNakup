@@ -55,7 +55,14 @@ async function searchEurospin(q:string){
 }
 async function searchSitemap(store:string,q:string){
  const cfg=SOURCES[store];const sitemap=cfg.base+cfg.endpoint;const r=await fetchPublic(sitemap);if(!r.ok)throw new Error(`${store} sitemap HTTP ${r.status}`);
- let xml=await r.text();const urls=[...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map(m=>m[1].trim()).filter(u=>norm(decodeURIComponent(u)).includes(norm(q).split(" ")[0])).slice(0,5);
+let xml:string;
+if(sitemap.endsWith(".gz")){
+  const bytes=new Uint8Array(await r.arrayBuffer());
+  const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  xml=await new Response(stream).text();
+}else{
+  xml=await r.text();
+};const urls=[...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map(m=>m[1].trim()).filter(u=>norm(decodeURIComponent(u)).includes(norm(q).split(" ")[0])).slice(0,5);
  const out:any[]=[];
  for(const u of urls){try{const p=await fetchPublic(u);if(!p.ok)continue;const html=await p.text();const scripts=[...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
  for(const m of scripts){try{const obj=JSON.parse(m[1]);const nodes=Array.isArray(obj)?obj:[obj];for(const n of nodes){const x=n["@type"]==="Product"?n:(n["@graph"]||[]).find((z:any)=>z["@type"]==="Product");if(x?.name&&norm(x.name).includes(norm(q).split(" ")[0])){const offers=Array.isArray(x.offers)?x.offers[0]:x.offers;const price=offers?.price?Number(offers.price):null;if(price)out.push({store:store==="lidl"?"Lidl":"Hofer",name:x.name,brand:x.brand?.name||x.brand||null,price,unit_price:null,unit:null,url:offers?.url||u,source:u,checked_at:new Date().toISOString()})}}}catch{}}}catch{}}
