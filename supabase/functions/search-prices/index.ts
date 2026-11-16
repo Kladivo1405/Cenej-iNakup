@@ -8,16 +8,28 @@ const SOURCES: Record<string, {base:string; endpoint:string}> = {
   lidl: {base:"https://www.lidl.si",endpoint:"/p/export/SI/sl/product_sitemap.xml.gz"},
   hofer: {base:"https://www.hofer.si",endpoint:"/sitemap_products.xml"},
 };
-const UA="CenejsiNakup/0.7 (+https://github.com/Kladivo1405/Cenej-iNakup)";
+const UA="CenejsiNakup/0.8 (+https://github.com/Kladivo1405/Cenej-iNakup)";
 const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"};
 const norm=(s:string)=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
 const decodeHtml=(s:string)=>String(s??"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/&euro;/g,"€").replace(/&#39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,"<").replace(/&gt;/g,">");
 function allowedByRobots(txt:string,path:string):boolean {
-  let active=false; const rules:string[]=[];
-  for(const raw of txt.split(/\r?\n/)){const line=raw.split("#")[0].trim();if(!line)continue;const i=line.indexOf(":");if(i<0)continue;const k=line.slice(0,i).trim().toLowerCase(),v=line.slice(i+1).trim();
-    if(k==="user-agent"){active=v==="*";continue} if(active&&k==="disallow"&&v)rules.push(v);
+  // Evaluate the *-group, with the longest matching path taking precedence.
+  // This is a conservative subset of robots.txt (wildcards/$ are rejected).
+  let agents:string[]=[], rules:{path:string;allow:boolean}[]=[], groups:{agents:string[];rules:{path:string;allow:boolean}[]}[]=[];
+  function finish(){if(agents.length)groups.push({agents:[...agents],rules:[...rules]});agents=[];rules=[];}
+  for(const raw of txt.split(/\r?\n/)){
+    const line=raw.split("#")[0].trim();if(!line)continue;
+    const i=line.indexOf(":");if(i<0)continue;
+    const k=line.slice(0,i).trim().toLowerCase(),v=line.slice(i+1).trim();
+    if(k==="user-agent") {if(rules.length)finish();agents.push(v.toLowerCase());}
+    else if(k==="allow"||k==="disallow") {if(agents.length&&v)rules.push({path:v,allow:k==="allow"});}
   }
-  return !rules.some(r=>path.startsWith(r));
+  finish();
+  const applicable=groups.filter(g=>g.agents.includes("*"));
+  const matches=applicable.flatMap(g=>g.rules).filter(r=>!/[*$]/.test(r.path)&&path.startsWith(r.path));
+  if(applicable.some(g=>g.rules.some(r=>/[*$]/.test(r.path))))return false;
+  matches.sort((a,b)=>b.path.length-a.path.length||Number(b.allow)-Number(a.allow));
+  return matches.length?matches[0].allow:true;
 }
 async function fetchPublic(url:string):Promise<Response>{
   const u=new URL(url);const rr=await fetch(u.origin+"/robots.txt",{headers:{"User-Agent":UA},signal:AbortSignal.timeout(12000)});
@@ -118,9 +130,18 @@ async function searchSitemap(store:"Lidl"|"Hofer",q:string){
 // Product offers are accepted only when official JSON-LD exposes a numeric price.
 async function searchOfficialShop(store:"Spar"|"Mercator",q:string){
  const base=store==="Spar"?"https://online.spar.si/":"https://mercatoronline.si/";
- const r=await fetchPublic(base);if(!r.ok)throw new Error(`${store} HTTP ${r.status}`);
- const html=await r.text();const out:any[]=[];
+ // Category pages expose product listings; homepage-only search misses them.
+ // This is a conservative discovery probe, not a full catalog integration.
+ const paths=store==="Spar"&&productType(q)==="milk"
+  ? ["ca/hlajeni-in-mlecni-izdelki/mleko-in-mlecni-napitki/sveze-mleko/S2/S2-1/S2-1-2"]
+  : [""];
+ const out:any[]=[];
+ for(const path of paths){
+ const pageUrl=new URL(path,base).toString();
+ const r=await fetchPublic(pageUrl);if(!r.ok)throw new Error(`${store} HTTP ${r.status}`);
+ const html=await r.text();
  const scripts=[...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+ if(!scripts.length)throw new Error(`${store}: stran ${pageUrl} ne vsebuje JSON-LD Product; potreben je namenski katalog adapter`);
  for(const m of scripts){try{const data=JSON.parse(m[1]);for(const x of collectProducts(data)){
   const name=decodeHtml(String(x.name??""));const desc=decodeHtml(String(x.description??"").replace(/<[^>]+>/g," "));
   if(!queryMatches(q,name,desc))continue;
@@ -128,9 +149,10 @@ async function searchOfficialShop(store:"Spar"|"Mercator",q:string){
   const price=Number(offers?.price??offers?.lowPrice);
   if(!Number.isFinite(price)||price<=0)continue;
   const candidate=makeOffer({store,name,description:desc,brand:x.brand,price,
-   priceValidUntil:offers?.priceValidUntil,url:offers?.url||x.url||base,source:base});
+   priceValidUntil:offers?.priceValidUntil,url:offers?.url||x.url||pageUrl,source:pageUrl});
   if(candidate)out.push(applyBasketEligibility(candidate,q));
  }}catch{/* invalid JSON-LD is ignored */}}
+ }
  return out.slice(0,25);
 }
 serve(async(req)=>{
