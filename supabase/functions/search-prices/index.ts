@@ -8,34 +8,62 @@ const SOURCES: Record<string, {base:string; endpoint:string}> = {
   lidl: {base:"https://www.lidl.si",endpoint:"/p/export/SI/sl/product_sitemap.xml.gz"},
   hofer: {base:"https://www.hofer.si",endpoint:"/sitemap_products.xml"},
 };
-const UA="CenejsiNakup/0.8 (+https://github.com/Kladivo1405/Cenej-iNakup)";
+const UA="CenejsiNakup/0.9 (+https://github.com/Kladivo1405/Cenej-iNakup)";
 const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"};
 const norm=(s:string)=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
 const decodeHtml=(s:string)=>String(s??"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/&euro;/g,"€").replace(/&#39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,"<").replace(/&gt;/g,">");
-function allowedByRobots(txt:string,path:string):boolean {
-  // Evaluate the *-group, with the longest matching path taking precedence.
-  // This is a conservative subset of robots.txt (wildcards/$ are rejected).
-  let agents:string[]=[], rules:{path:string;allow:boolean}[]=[], groups:{agents:string[];rules:{path:string;allow:boolean}[]}[]=[];
-  function finish(){if(agents.length)groups.push({agents:[...agents],rules:[...rules]});agents=[];rules=[];}
+// RFC 9309: match relevant user-agent group, longest Allow/Disallow rule,
+// wildcard * and terminal $. No bypass of explicit restrictions.
+type RobotRule={pattern:string;allow:boolean};
+const ROBOT_TOKEN="CenejsiNakup";
+function robotsDecision(txt:string, path:string, token=ROBOT_TOKEN):{allowed:boolean;reason:string}{
+  const groups:{agents:string[];rules:RobotRule[]}[]=[];
+  let agents:string[]=[],rules:RobotRule[]=[],hasRules=false;
+  const flush=()=>{if(agents.length)groups.push({agents:[...agents],rules:[...rules]});agents=[];rules=[];hasRules=false;};
   for(const raw of txt.split(/\r?\n/)){
-    const line=raw.split("#")[0].trim();if(!line)continue;
+    const line=raw.split("#",1)[0].trim();if(!line)continue;
     const i=line.indexOf(":");if(i<0)continue;
-    const k=line.slice(0,i).trim().toLowerCase(),v=line.slice(i+1).trim();
-    if(k==="user-agent") {if(rules.length)finish();agents.push(v.toLowerCase());}
-    else if(k==="allow"||k==="disallow") {if(agents.length&&v)rules.push({path:v,allow:k==="allow"});}
+    const key=line.slice(0,i).trim().toLowerCase(), val=line.slice(i+1).trim();
+    if(key==="user-agent"){
+      if(hasRules)flush();
+      agents.push(val.toLowerCase());
+    }else if((key==="allow"||key==="disallow")&&agents.length){
+      hasRules=true;
+      if(val)rules.push({pattern:val,allow:key==="allow"});
+    }
   }
-  finish();
-  const applicable=groups.filter(g=>g.agents.includes("*"));
-  const matches=applicable.flatMap(g=>g.rules).filter(r=>!/[*$]/.test(r.path)&&path.startsWith(r.path));
-  if(applicable.some(g=>g.rules.some(r=>/[*$]/.test(r.path))))return false;
-  matches.sort((a,b)=>b.path.length-a.path.length||Number(b.allow)-Number(a.allow));
-  return matches.length?matches[0].allow:true;
+  flush();
+  const ua=token.toLowerCase();
+  const specific=groups.filter(g=>g.agents.some(a=>a!=="*"&&(ua===a||ua.includes(a))));
+  const applicable=specific.length?specific:groups.filter(g=>g.agents.includes("*"));
+  const candidates:{rule:RobotRule;length:number}[]=[];
+  for(const g of applicable)for(const rule of g.rules){
+    // Match against URL path + query, preserving anchored prefix semantics.
+    const anchor=rule.pattern.endsWith("$");
+    const rawPattern=anchor?rule.pattern.slice(0,-1):rule.pattern;
+    const escaped=rawPattern.split("*").map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join(".*");
+    try{if(new RegExp("^"+escaped+(anchor?"$":"")).test(path))candidates.push({rule,length:rawPattern.replace(/\*/g,"").length});}catch{return {allowed:false,reason:"neveljavno robots pravilo"};}
+  }
+  candidates.sort((a,b)=>b.length-a.length||Number(b.rule.allow)-Number(a.rule.allow));
+  if(!candidates.length)return {allowed:true,reason:"ni ujemajočega se pravila"};
+  const winner=candidates[0].rule;
+  return {allowed:winner.allow,reason:`${winner.allow?"Allow":"Disallow"}: ${winner.pattern}`};
 }
+const robotsCache=new Map<string,{text:string;until:number}>();
 async function fetchPublic(url:string):Promise<Response>{
-  const u=new URL(url);const rr=await fetch(u.origin+"/robots.txt",{headers:{"User-Agent":UA},signal:AbortSignal.timeout(12000)});
-  if(!rr.ok)throw new Error(`robots.txt ni dosegljiv (${rr.status}); vir preskočen`);
-  if(!allowedByRobots(await rr.text(),u.pathname+(u.search||"")))throw new Error("robots.txt ne dovoljuje dostopa do te poti");
-  return await fetch(url,{headers:{"User-Agent":UA,"Accept":"application/json,text/html,application/xml,text/xml,*/*"},signal:AbortSignal.timeout(18000)});
+  const u=new URL(url);
+  if(u.protocol!=="https:")throw new Error("dovoljen je samo HTTPS");
+  let cached=robotsCache.get(u.origin);
+  if(!cached||cached.until<Date.now()){
+    let rr:Response;
+    try{rr=await fetch(u.origin+"/robots.txt",{headers:{"User-Agent":UA},signal:AbortSignal.timeout(12000),redirect:"error"});}
+    catch(e){throw new Error(`robots.txt nedosegljiv: ${String(e).slice(0,90)}`);}
+    if(!rr.ok)throw new Error(`robots.txt HTTP ${rr.status}; vir preskočen`);
+    cached={text:await rr.text(),until:Date.now()+15*60*1000};robotsCache.set(u.origin,cached);
+  }
+  const decision=robotsDecision(cached.text,u.pathname+(u.search||""));
+  if(!decision.allowed)throw new Error(`robots.txt blokira ${u.pathname}: ${decision.reason}`);
+  return await fetch(url,{headers:{"User-Agent":UA,"Accept":"application/json,text/html,application/xml,text/xml,*/*"},signal:AbortSignal.timeout(18000),redirect:"error"});
 }
 function priceFromMinor(p:any,minor=2){if(p==null)return null;const n=Number(p);return Number.isFinite(n)?n/Math.pow(10,minor):null}
 function brandName(v:any):string|null { if(!v)return null;if(typeof v==="string")return v;if(Array.isArray(v))return brandName(v[0]);return typeof v.name==="string"?v.name:null; }
