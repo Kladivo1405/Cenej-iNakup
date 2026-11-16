@@ -11,7 +11,8 @@ const UA="CenejsiNakup/0.9 (+https://github.com/Kladivo1405/Cenej-iNakup)";
 const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"};
 const jsonHeaders={...cors,"Content-Type":"application/json; charset=utf-8"};
 const norm=(s:string)=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
-const decodeHtml=(s:string)=>String(s??"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/&euro;/g,"€").replace(/&#39;|&apos;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,"<").replace(/&gt;/g,">");
+const decodeHtml=(s:string)=>String(s??"").replace(/&nbsp;|&#160;/g," ").replace(/&euro;/g,"€").replace(/&#39;|&apos;/g,"'").replace(/&quot;|&#34;/g,'"').replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&amp;/g,"&");
+const plainText=(s:string)=>decodeHtml(s.replace(/<[^>]+>/g," ")).replace(/\s+/g," ").trim();
 // RFC 9309: match relevant user-agent group, longest Allow/Disallow rule,
 // wildcard * and terminal $. No bypass of explicit restrictions.
 type RobotRule={pattern:string;allow:boolean};
@@ -65,7 +66,6 @@ async function fetchPublic(url:string):Promise<Response>{
   if(!decision.allowed)throw new Error(`robots.txt blokira ${u.pathname}: ${decision.reason}`);
   return await fetch(url,{headers:{"User-Agent":UA,"Accept":"application/json,text/html,application/xml,text/xml,*/*"},signal:AbortSignal.timeout(18000),redirect:"error"});
 }
-function priceFromMinor(p:any,minor=2){if(p==null)return null;const n=Number(p);return Number.isFinite(n)?n/Math.pow(10,minor):null}
 function brandName(v:any):string|null { if(!v)return null;if(typeof v==="string")return v;if(Array.isArray(v))return brandName(v[0]);return typeof v.name==="string"?v.name:null; }
 function parseQuantity(text:string):{amount:number;unit:"l"|"kg";label:string;count:number;each:number}|null {
   const t=String(text??"").replace(/,/g,".").toLowerCase();
@@ -104,7 +104,7 @@ function milkType(text:string, fallback:"fresh"|null=null):"fresh"|"uht"|null {
 function sameQuantity(requested:NonNullable<ReturnType<typeof parseQuantity>>,actual:ReturnType<typeof parseQuantity>){
  return !!actual&&requested.unit===actual.unit&&requested.count===actual.count&&Math.abs(requested.each-actual.each)<0.000001;
 }
-function queryMatches(q:string,name:string,description="",weight=""):boolean {
+function queryMatches(q:string,name:string,description="",weight="",brand=""):boolean {
  const title=norm(name);const combined=name+' '+description;
  if(/mleko za telo|losjon|lotion|milo|lonec|robcki|kopel|sampon|balzam|krema|kozmet/.test(title))return false;
  const qt=productType(q),nt=productType(name);if(qt&&nt!==qt)return false;
@@ -120,7 +120,11 @@ function queryMatches(q:string,name:string,description="",weight=""):boolean {
  const requested=parseQuantity(q);
  const actual=parseQuantity(name)??parseQuantity(weight)??(qt==="milk"?null:parseQuantity(description));
  if(requested&&(qt==="milk"||actual)&&!sameQuantity(requested,actual))return false;
- if(!qt){const meaningful=norm(q).split(' ').filter(x=>x.length>3&&!/^\d/.test(x));if(!meaningful.some(t=>title.includes(t)))return false;}
+ if(!qt){
+   const meaningful=norm(q).split(" ").filter(x=>x.length>3&&!/^\d/.test(x));
+   const words=new Set(norm(name+" "+brand).split(" "));
+   if(!meaningful.length||!meaningful.every(word=>words.has(word)))return false;
+ }
  return true;
 }
 function validity(validUntil:any):{status:"current"|"expired"|"unverified";date:string|null} {
@@ -132,7 +136,11 @@ function validity(validUntil:any):{status:"current"|"expired"|"unverified";date:
 function makeOffer(input:any){
   const price=Number(input.price);if(!Number.isFinite(price)||price<=0)return null;
   const name=decodeHtml(input.name??"Neimenovan izdelek").replace(/\s+/g," ").trim();
-  const quantity=parseQuantity(name)??parseQuantity(input.weight)??(productType(name)==="milk"?null:parseQuantity(input.description));
+  const diapers=/\bplenice\b/.test(norm(name));
+  const pieces=diapers?Number(name.match(/\b(\d+)\s*(?:\/\s*1\b|kos(?:ov)?\b)/i)?.[1]):0;
+  const quantity=diapers
+    ? pieces>0?{amount:pieces,unit:"kos",label:`${pieces} kos`}:null
+    : parseQuantity(name)??parseQuantity(input.weight)??(productType(name)==="milk"?null:parseQuantity(input.description));
   const valid=validity(input.priceValidUntil);
   return {store:input.store,name,brand:brandName(input.brand),price,unit:quantity?.label??null,unit_price:quantity?price/quantity.amount:null,unit_measure:quantity?.unit??null,price_valid_until:valid.date,price_status:valid.status,eligible_for_basket:false,url:input.url??null,source:input.source??null,checked_at:new Date().toISOString()};
 }
@@ -143,9 +151,34 @@ function applyBasketEligibility(offer:any,query:string,description=""){
   return offer;
 }
 async function searchTus(q:string){
- const url=`https://www.tus.si/wp-json/wc/store/products?search=${encodeURIComponent(q)}&per_page=50`;
- const r=await fetchPublic(url);if(!r.ok)throw new Error(`Tuš HTTP ${r.status}`);const arr=await r.json();if(!Array.isArray(arr))return [];
- return arr.flatMap((p:any)=>{const description=decodeHtml(String(p.description??p.short_description??"").replace(/<[^>]+>/g," "));if(!queryMatches(q,p.name,description))return[];const o=makeOffer({store:"Tuš",name:p.name,description,brand:brandName(p.brands?.[0]),price:priceFromMinor(p.prices?.price,p.prices?.currency_minor_unit??2),priceValidUntil:null,url:p.permalink,source:url});return o?[applyBasketEligibility(o,q)]:[];});
+ const term=discoveryTerms(q)[0];
+ if(!term)return [];
+ const url=`https://www.tus.si/wp-json/wc/store/products?search=${encodeURIComponent(term)}&per_page=50`;
+ const r=await fetchPublic(url);
+ if(!r.ok)throw new Error(`Tuš HTTP ${r.status}`);
+ const products=await r.json();
+ if(!Array.isArray(products))throw new Error("Tuš: neprepoznan odgovor kataloga");
+ const candidates=products.filter(p=>{
+   if(typeof p.name!=="string"||!/^https:\/\/www\.tus\.si\/izdelki\/[a-z0-9-]+\/$/.test(p.permalink))return false;
+   const description=plainText(p.description??p.short_description??"");
+   const quantity=parseQuantity(q);
+   return (!quantity||sameQuantity(quantity,parseQuantity(p.name)))&&
+     (productType(q)==="milk"?productType(p.name)==="milk":queryMatches(q,decodeHtml(p.name),description,"",brandName(p.brands)??""));
+ });
+ return await searchProductPages("Tuš",candidates.map(p=>p.permalink),(html,url)=>{
+   const product=structuredProducts(html)[0];
+   if(typeof product?.name!=="string")return null;
+   const description=plainText(product.description??"");
+   const brand=brandName(product.brand);
+   if(!queryMatches(q,product.name,description,"",brand??""))return null;
+   const regular=html.match(/<p class="price-regular"[^>]*>\s*<label>\s*Redna cena:\s*<\/label>\s*([\d,]+)\s*(?:€|&euro;)\s*<\/p>/i)?.[1];
+   const offer=product.offers;
+   // The catalogue's sale price can require a club card, coupon or minimum quantity.
+   const price=regular?Number(regular.replace(",",".")):
+     /price-discounted|Veljavnost akcije:/i.test(html)?null:
+     offer?.priceCurrency==="EUR"?offer.price:null;
+   return makeOffer({store:"Tuš",name:product.name,description,brand,price,url,source:url});
+ });
 }
 async function searchEurospin(q:string){
  const url="https://www.eurospin.si/akcije/";const r=await fetchPublic(url);if(!r.ok)throw new Error(`Eurospin HTTP ${r.status}`);const html=await r.text();const out:any[]=[];
@@ -158,18 +191,101 @@ async function searchEurospin(q:string){
  return out.slice(0,20);
 }
 function collectProducts(obj:any):any[]{if(!obj||typeof obj!=="object")return[];const found:any[]=[];if(obj["@type"]==="Product"||(Array.isArray(obj["@type"])&&obj["@type"].includes("Product")))found.push(obj);if(Array.isArray(obj))for(const x of obj)found.push(...collectProducts(x));else for(const v of Object.values(obj))if(v&&typeof v==="object")found.push(...collectProducts(v));return found;}
-async function searchSitemap(store:"Lidl"|"Hofer",q:string){
- const cfg=store==="Lidl"?SOURCES.lidl:SOURCES.hofer;const sitemap=cfg.base+cfg.endpoint;const r=await fetchPublic(sitemap);if(!r.ok)throw new Error(`${store} sitemap HTTP ${r.status}`);
- let xml:string;if(sitemap.endsWith(".gz")){const bytes=new Uint8Array(await r.arrayBuffer());const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));xml=await new Response(stream).text();}else xml=await r.text();
- const first=norm(q).split(" ")[0];const urls=[...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map(m=>m[1].trim()).filter(u=>{try{return norm(decodeURIComponent(u)).includes(first)}catch{return norm(u).includes(first)}}).slice(0,25);
- const out:any[]=[];
- for(const u of urls){try{const p=await fetchPublic(u);if(!p.ok)continue;const html=await p.text();const scripts=[...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
-  for(const m of scripts){try{const obj=JSON.parse(m[1]);for(const x of collectProducts(obj)){const name=String(x.name??"");const description=decodeHtml(String(x.description??"").replace(/<[^>]+>/g," "));if(!name||!queryMatches(q,name,description))continue;
-   const offers=Array.isArray(x.offers)?x.offers[0]:x.offers;const o=makeOffer({store,name,description,brand:x.brand,price:offers?.price??offers?.lowPrice,priceValidUntil:offers?.priceValidUntil,url:offers?.url||u,source:u});if(o)out.push(applyBasketEligibility(o,q));
-  }}catch{}}
- }catch{}}
- return out;
+function structuredProducts(html:string):any[]{
+  return [...html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].flatMap(match=>{
+    try{return collectProducts(JSON.parse(match[1]));}catch{return [];}
+  });
 }
+async function searchProductPages(store:string,urls:string[],parse:(html:string,url:string)=>ReturnType<typeof makeOffer>){
+  const out:NonNullable<ReturnType<typeof makeOffer>>[]=[];
+  let failures=0;
+  const candidates=[...new Set(urls)].slice(0,12);
+  for(let i=0;i<candidates.length;i+=4){
+    const pages=await Promise.allSettled(candidates.slice(i,i+4).map(async url=>{
+      const page=await fetchPublic(url);
+      if(page.status===404||page.status===410)return null;
+      if(!page.ok)throw new Error(store+" HTTP "+page.status);
+      return parse(await page.text(),url);
+    }));
+    for(const page of pages){
+      if(page.status==="rejected")failures++;
+      else if(page.value)out.push(page.value);
+    }
+  }
+  if(failures&&!out.length)throw new Error(store+": neuspešen dostop do strani izdelkov ("+failures+")");
+  return out;
+}
+async function searchLidlDairy(q:string){
+  const url="https://www.lidl.si/h/mlecni-izdelki-in-jajca/h10095761";
+  const response=await fetchPublic(url);
+  if(!response.ok)throw new Error("Lidl HTTP "+response.status);
+  const html=await response.text();
+  const tiles=[...html.matchAll(/\bdata-grid-data="([^"]+)"/g)];
+  if(!tiles.length)throw new Error("Lidl: neprepoznana kategorija izdelkov");
+  const offers=new Map<string,NonNullable<ReturnType<typeof makeOffer>>>();
+  const requested=parseQuantity(q);
+  for(const tile of tiles){
+    let p;
+    try{p=JSON.parse(decodeHtml(tile[1]));}catch{continue;}
+    const path=p.canonicalPath;
+    if(typeof path!=="string"||!/^\/p\/[a-z0-9-]+\/p\d+$/.test(path))continue;
+    if(typeof p.fullTitle!=="string"||p.price?.currencyCode!=="EUR"||p.lidlPlus?.length)continue;
+    const details=plainText(p.keyfacts?.description??"");
+    const weight=plainText(p.price?.packaging?.text??"");
+    const brand=brandName(p.brand);
+    // Keep the published public price informational. A listing can be location-dependent.
+    const name=productType(q)==="milk"?milkDisplayName(p.fullTitle,details):p.fullTitle;
+    const quantity=parseQuantity(name)??parseQuantity(weight);
+    if(!queryMatches(q,name,details,weight,brand??""))continue;
+    if(requested&&!sameQuantity(requested,quantity))continue;
+    if(p.multipack===true&&(!quantity||quantity.count===1))continue;
+    const offer=makeOffer({store:"Lidl",name,brand,weight,price:p.price.price,url:"https://www.lidl.si"+path,source:url});
+    if(offer)offers.set(path,offer);
+  }
+  return [...offers.values()];
+}
+function milkDisplayName(name:string,details:string){
+  const fat=details.match(/\b\d+(?:[,.]\d+)?\s*%/)?.[0];
+  return fat&&!name.includes("%")?name+", "+fat:name;
+}
+async function searchSitemap(store:"Lidl"|"Hofer",q:string){
+  if(store==="Lidl"&&["milk","butter","eggs"].includes(productType(q)??""))return await searchLidlDairy(q);
+  const cfg=store==="Lidl"?SOURCES.lidl:SOURCES.hofer;
+  const sitemap=cfg.base+cfg.endpoint;
+  const response=await fetchPublic(sitemap);
+  if(!response.ok)throw new Error(store+" sitemap HTTP "+response.status);
+  const xml=sitemap.endsWith(".gz")
+    ?await new Response(response.body!.pipeThrough(new DecompressionStream("gzip"))).text()
+    :await response.text();
+  const terms=discoveryTerms(q);
+  if(!terms.length)return [];
+  const path=store==="Hofer"?/^\/izdelek\/[a-z0-9-]+$/:/^\/p\/[a-z0-9-]+\/p\d+$/;
+  const candidates=[...xml.matchAll(/<loc>([^<]+)<\/loc>/gi)].flatMap(match=>{
+    try{
+      const url=new URL(match[1].trim());
+      if(url.origin!==cfg.base||!path.test(url.pathname))return [];
+      const rank=candidateRank(store==="Lidl"?url.pathname.replace(/\/p\d+$/,""):url.pathname,q,terms);
+      return rank?[{url:url.href,rank}]:[];
+    }catch{return [];}
+  }).sort((a,b)=>b.rank-a.rank);
+  return await searchProductPages(store,candidates.map(p=>p.url),(html,url)=>{
+    const p=structuredProducts(html)[0];
+    if(typeof p?.name!=="string")return null;
+    const brand=brandName(p.brand);
+    const description=plainText(p.description??"");
+    const weight=store==="Hofer"?description:"";
+    // Hofer puts the milk composition and pack size into the product facts.
+    const name=store==="Hofer"&&productType(q)==="milk"?milkDisplayName(p.name,description):p.name;
+    if(!queryMatches(q,name,description,weight,brand??""))return null;
+    const offers=Array.isArray(p.offers)?p.offers:p.offers?[p.offers]:[];
+    const offer=offers.find((x:any)=>x["@type"]==="Offer"&&x.priceCurrency==="EUR");
+    if(offer&&validity(offer.priceValidUntil).status==="expired")return null;
+    const regular=store==="Hofer"?html.match(/<span class="base-price__regular">\s*<span>\s*(\d+,\d{2})(?:\s|&nbsp;)*(?:€|&euro;)\s*<\/span>/i)?.[1]:null;
+    const price=regular?Number(regular.replace(",",".")):offer?.price;
+    return makeOffer({store,name,description,weight,brand,price,url,source:url});
+  });
+}
+
 // SPAR search HTML streams Next.js records. Parse data only and use the detail
 // page's EUR Offer for the price rather than the search card's promotion fields.
 function sparProductPaths(html:string,q:string):string[] {
