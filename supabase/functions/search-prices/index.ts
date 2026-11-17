@@ -96,7 +96,7 @@ function attributes(text:string){const n=norm(text);return {
  lactoseFree:/brez laktoze|lactose free|laktosefrei/.test(n),
  chocolate:/\b(cokoladno|kakav|cocoa|chocolate)\b/.test(n),
  };}
-function milkType(text:string, fallback:"fresh"|null=null):"fresh"|"uht"|null {
+function milkType(text:string, fallback:"uht"|null=null):"fresh"|"uht"|null {
  const n=norm(text);
  const fresh=/\b(sveze|svezega|fresh|frisch|pasteriziran\w*)\b|podaljsano svezino/.test(n);
  const uht=/\b(trajno|uht|haltbar|steriliziran\w*)\b/.test(n);
@@ -136,7 +136,7 @@ function queryMatches(q:string,name:string,description="",weight="",brand=""):bo
    const a=attributes(q),b=attributes(combined);
    if(a.lactoseFree!==b.lactoseFree||a.chocolate!==b.chocolate)return false;
    if(/\b(napitek|kislo|kondenzirano|kozje|ovcje|sojino|ovseno|rizevo|mandljevo|kokosovo)\b|\bv prahu\b/.test(title))return false;
-   const requestedType=milkType(q,"fresh");
+   const requestedType=milkType(q,"uht");
    if(!requestedType||requestedType!==milkType(combined))return false;
  }
  const qFat=q.match(/(\d+(?:[,.]\d+)?)\s*%/), nFat=(qt==="milk"?name:combined).match(/(\d+(?:[,.]\d+)?)\s*%/);
@@ -417,7 +417,7 @@ function candidateRank(path:string,q:string,terms:string[]){
   if(!hits)return 0;
   const milk=productType(q)==="milk";
   const type=milkType(slug);
-  if(milk&&type&&type!==milkType(q,"fresh"))return 0;
+  if(milk&&type&&type!==milkType(q,"uht"))return 0;
   const fat=q.match(/(\d+(?:[,.]\d+)?)\s*%/)?.[1]?.replace(/[,.]/," ");
   return hits+(milk&&type?2:0)+(fat&&(" "+slug+" ").includes(" "+fat+" ")?4:0);
 }
@@ -458,7 +458,7 @@ async function searchRetailer(store:"Spar"|"Mercator",q:string){
 function substitutionFor(query:string):{query:string;reason:string;rank:(offer:any)=>number}|null {
  const type=productType(query);
  const quantity=parseQuantity(query);
- if(type==="milk"&&quantity&&milkType(query,"fresh")){
+ if(type==="milk"&&quantity&&milkType(query,"uht")){
    const fat=query.match(/(\d+(?:[,.]\d+)?)\s*%/);
    if(fat){
      const target=Number(fat[1].replace(",","."));
@@ -512,7 +512,7 @@ async function handleSearch(req:Request){
     }
   }));
   const summary={total:offers.length,eligible:offers.filter(x=>x.eligible_for_basket).length,unverified:offers.filter(x=>x.price_status==="unverified").length,expired:offers.filter(x=>x.price_status==="expired").length};
-  return new Response(JSON.stringify({query:q,offers,alternatives,sources,summary,notice:"Brez dokazljive veljavnosti cene ponudba ostane nepotrjena. Pri mleku brez navedene vrste iščemo sveže mleko. Za trajno mleko dodaj trajno ali UHT."}),{headers:jsonHeaders});
+  return new Response(JSON.stringify({query:q,offers,alternatives,sources,summary,notice:"Brez dokazljive veljavnosti cene ponudba ostane nepotrjena. Pri mleku brez navedene vrste iščemo trajno mleko. Za sveže mleko dodaj sveže."}),{headers:jsonHeaders});
  }catch(e){return new Response(JSON.stringify({error:String(e)}),{status:400,headers:jsonHeaders});}
 }
 
