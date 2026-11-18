@@ -261,37 +261,59 @@ async function searchProductPages(store:string,urls:string[],parse:(html:string,
   if(failures&&!out.length)throw new Error(store+": neuspešen dostop do strani izdelkov ("+failures+")");
   return out;
 }
-async function searchLidlDairy(q:string){
-  const url="https://www.lidl.si/h/mlecni-izdelki-in-jajca/h10095761";
-  const response=await fetchPublic(url);
-  if(!response.ok)throw new Error("Lidl HTTP "+response.status);
-  const offers=lidlGridOffers(await response.text(),url,q);
-  if(offers.length||productType(q)!=="milk")return offers;
-  const term=/\balpsko\b/.test(norm(q))?"alpsko mleko":"mleko";
+const CATEGORY_PAGES=[
+  {words:/\b(mleko|maslo|jajca|sir|parmezan|jogurt|smetana|skuta)\b/,lidl:"/h/mlecni-izdelki-in-jajca/h10095761",hofer:"/izdelki/mleko-mlecni-izdelki-in-jajca/k/1588161418378170"},
+  {words:/\b(riz|testenine|moka|sladkor|strocnice|leca)\b/,lidl:"/h/iz-shrambe/h10096095",hofer:"/izdelki/testenine-riz-in-strocnice/k/1588161418378190"},
+  {words:/\b(poli|salama|hrenovke|piscanec|sunka|meso|prust|prsut)\b/,lidl:"/h/meso-in-perutnina/h10095752",hofer:"/izdelki/meso-mesni-izdelki-in-ribe/k/1588161418378160"},
+  {words:/\b(kava|caj|kakav)\b/,lidl:"/h/kava-caj-in-kakav/h10071683",hofer:null},
+  {words:/\b(cips|krekerji|kokice|piskoti|cokolada)\b/,lidl:"/h/sladkarije-in-prigrizki/h10096205",hofer:"/izdelki/sladki-in-slani-prigrizki/k/1588161418378240"},
+  {words:/\b(plenice|robcki)\b/,lidl:"/h/dojencki-in-otroci/h10096283",hofer:"/izdelki/otroska-prehrana-in-nega/k/1588161418378290"},
+  {words:/\b(kruh|kajzerica|zemlja|bageta)\b/,lidl:"/h/pekarna/h10096086",hofer:"/izdelki/pekovski-izdelki-namazi-in-kosmici/k/1588161418378180"},
+  {words:/\b(pivo|vino|lasko)\b/,lidl:"/h/vino-pivo-in-zgane-pijace/h10096268",hofer:"/izdelki/alkoholne-pijace/k/1588161418378260"},
+  {words:/\b(voda|sok|pijaca)\b/,lidl:"/h/pijace/h10071022",hofer:"/izdelki/brezalkoholne-pijace/k/1588161418378250"},
+  {words:/\b(jabolka|banane|krompir|cebula|solata)\b/,lidl:"/h/sadje-in-zelenjava/h10071012",hofer:"/izdelki/sadje-in-zelenjava/k/1588161418378150"},
+] as const;
+async function searchLidlListings(q:string){
+  const category=CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.lidl;
+  const terms=discoveryTerms(q);
+  if(!terms.length)return [];
+  const term=/\balpsko\b/.test(norm(q))?"alpsko mleko":terms.join(" ");
   const search="https://www.lidl.si/q/search?q="+encodeURIComponent(term);
-  const results=await fetchPublic(search);
-  if(results.status===404)return [];
-  if(!results.ok)throw new Error("Lidl iskanje HTTP "+results.status);
-  return lidlGridOffers(await results.text(),search,q);
+  const urls=category?["https://www.lidl.si"+category,search]:[search];
+  const pages=await Promise.allSettled(urls.map(async url=>{
+    const result=await fetchPublic(url);
+    if(result.status===404||result.status===410)return [];
+    if(!result.ok)throw new Error("Lidl HTTP "+result.status);
+    return lidlGridOffers(await result.text(),url,q);
+  }));
+  const offers=new Map<string,NonNullable<ReturnType<typeof makeOffer>>>();
+  for(const page of pages)if(page.status==="fulfilled")for(const offer of page.value){
+    if(!offers.has(offer.url))offers.set(offer.url,offer);
+  }
+  if(pages.every(page=>page.status==="rejected"))throw new Error("Lidl: javne strani trenutno nedosegljive");
+  return [...offers.values()];
 }
-function lidlGridOffers(html:string,url:string,q:string){
+function lidlGridOffers(html:string,url:string,q?:string){
   const tiles=[...html.matchAll(/\bdata-grid-data="([^"]+)"/g)];
   if(!tiles.length&&url.includes("/h/"))throw new Error("Lidl: neprepoznana kategorija izdelkov");
   const offers=new Map<string,NonNullable<ReturnType<typeof makeOffer>>>();
-  const requested=parseQuantity(q);
+  const requested=q?parseQuantity(q):null;
   for(const tile of tiles){
     let p;
     try{p=JSON.parse(decodeHtml(tile[1]));}catch{continue;}
     const path=p.canonicalPath;
     if(typeof path!=="string"||!/^\/p\/[a-z0-9-]+\/p\d+$/.test(path))continue;
-    if(typeof p.fullTitle!=="string"||p.price?.currencyCode!=="EUR"||p.lidlPlus?.length)continue;
+    if(typeof p.fullTitle!=="string"||p.price?.currencyCode!=="EUR"||p.lidlPlus?.length||p.price.variantsHaveDifferentPrices)continue;
+    if(p.stockAvailability?.badgeInfo?.badges?.some((badge:any)=>String(badge.type).includes("FUTURE")))continue;
+    const dates=p.regionsPrices?.["1"]?.currentPrice;
+    if(Date.parse(dates?.endDate)<Date.now())continue;
     const details=plainText(p.keyfacts?.description??"");
     const weight=plainText(p.price?.packaging?.text??"");
     const brand=brandName(p.brand);
     // Keep the published public price informational. A listing can be location-dependent.
-    const name=productType(q)==="milk"?milkDisplayName(p.fullTitle,details):p.fullTitle;
+    const name=productType(p.fullTitle)==="milk"?milkDisplayName(p.fullTitle,details):p.fullTitle;
     const quantity=packageQuantity(name,weight);
-    if(!queryMatches(q,name,details,weight,brand??""))continue;
+    if(q&&!queryMatches(q,name,details,weight,brand??""))continue;
     if(requested&&!sameQuantity(requested,quantity))continue;
     if(p.multipack===true&&(!quantity||quantity.count===1))continue;
     const offer=makeOffer({store:"Lidl",name,brand,weight,price:p.price.price,url:"https://www.lidl.si"+path,source:url});
@@ -304,18 +326,26 @@ function milkDisplayName(name:string,details:string){
   return fat&&!name.includes("%")?name+", "+fat:name;
 }
 async function searchSitemap(store:"Lidl"|"Hofer",q:string){
-  if(store==="Lidl"&&["milk","butter","eggs"].includes(productType(q)??""))return await searchLidlDairy(q);
+  if(store==="Lidl"){
+    const publicOffers=await searchLidlListings(q);
+    if(publicOffers.length||["milk","butter","eggs"].includes(productType(q)??""))return publicOffers;
+  }
   const cfg=store==="Lidl"?SOURCES.lidl:SOURCES.hofer;
   const sitemap=cfg.base+cfg.endpoint;
-  const dairyCategory="https://www.hofer.si/izdelki/mleko-mlecni-izdelki-in-jajca/k/1588161418378170";
-  const dairy=store==="Hofer"&&["milk","butter","eggs"].includes(productType(q)??"");
+  const category=store==="Hofer"?CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.hofer:null;
+  const hoferPages=store==="Hofer"?[
+    ...(category?[cfg.base+category]:[]),
+    cfg.base+"/izdelki/vse-spuscene-cene/k/1588161418378360",
+  ]:[];
+  const categoryPages=await Promise.all(hoferPages.map(readHoferCategory));
+  const listingOffers=categoryPages.flatMap(({url,html})=>hoferGridOffers(html,url,q));
+  if(listingOffers.length)return [...new Map(listingOffers.map(offer=>[offer.url,offer])).values()];
   const [response,...categories]=await Promise.all([
-    fetchPublic(sitemap),
-    ...dairy?[dairyCategory,"https://www.hofer.si/izdelki/vse-spuscene-cene/k/1588161418378360"]
-      .map(hoferCategoryLinks):[]
+    fetchPublic(sitemap).catch(error=>{if(store==="Lidl")throw error;return null;}),
+    ...categoryPages.map(({url,html})=>hoferCategoryLinks(url,html))
   ]);
-  if(!response.ok)throw new Error(store+" sitemap HTTP "+response.status);
-  const xml=sitemap.endsWith(".gz")
+  if(response&&!response.ok&&store==="Lidl")throw new Error(store+" sitemap HTTP "+response.status);
+  const xml=!response?.ok?"":sitemap.endsWith(".gz")
     ?await new Response(response.body!.pipeThrough(new DecompressionStream("gzip"))).text()
     :await response.text();
   const terms=discoveryTerms(q);
@@ -323,6 +353,7 @@ async function searchSitemap(store:"Lidl"|"Hofer",q:string){
   const path=store==="Hofer"?/^\/izdelek\/[a-z0-9-]+$/:/^\/p\/[a-z0-9-]+\/p\d+$/;
   const links=categories.flat();
   links.push(...[...xml.matchAll(/<loc>([^<]+)<\/loc>/gi)].map(m=>m[1].trim()));
+  if(!links.length&&!response?.ok)throw new Error(store+": javne strani trenutno nedosegljive");
   const candidates=[...new Set(links)].flatMap(link=>{
     try{
       const url=new URL(link);
@@ -348,9 +379,27 @@ async function searchSitemap(store:"Lidl"|"Hofer",q:string){
     return makeOffer({store,name,description,weight,brand,price,url,source:url});
   });
 }
-async function hoferCategoryLinks(url:string){
-  const read=async (page:string)=>fetchPublic(page).then(r=>r.ok?r.text():"").catch(()=>"");
-  const first=await read(url);
+async function readHoferCategory(url:string){
+  const html=await fetchPublic(url).then(r=>r.ok?r.text():"").catch(()=>"");
+  return {url,html};
+}
+function hoferGridOffers(html:string,source:string,q:string){
+  const out=[];
+  for(const card of html.matchAll(/<a href="(\/izdelek\/[a-z0-9-]+)" class="base-link product-tile__link[^"]*"[^>]*>([\s\S]*?)<\/a>/gi)){
+    const body=card[2];
+    // This marker identifies the regular-price cards on Hofer's category pages.
+    if(!body.includes("TO NI AKCIJA"))continue;
+    const name=plainText(body.match(/<div class="product-tile__name"[^>]*>\s*<p[^>]*>([^<]*)/i)?.[1]??"");
+    const brand=plainText(body.match(/<div class="product-tile__brandname"[^>]*>\s*<p[^>]*>([^<]*)/i)?.[1]??"");
+    const weight=plainText(body.match(/class="product-tile__unit-of-measurement"[^>]*><p>([^<]*)/i)?.[1]??"");
+    const price=body.match(/<span class="base-price__regular">\s*<span>\s*(\d+,\d{2})(?:\s|&nbsp;)*(?:€|&euro;)\s*<\/span>/i)?.[1];
+    if(!name||!price||!queryMatches(q,name,"",weight,brand))continue;
+    const offer=makeOffer({store:"Hofer",name,brand,weight,price:Number(price.replace(",",".")),url:"https://www.hofer.si"+card[1],source});
+    if(offer)out.push(offer);
+  }
+  return out;
+}
+async function hoferCategoryLinks(url:string,first:string){
   const category=new URL(url);
   const paths=[...first.matchAll(/href="([^"]+\?page=\d+)"/gi)].flatMap(m=>{
     try{
@@ -358,7 +407,7 @@ async function hoferCategoryLinks(url:string){
       return page.origin===category.origin&&page.pathname===category.pathname?[page.href]:[];
     }catch{return [];}
   });
-  const pages=[first,...await Promise.all([...new Set(paths)].slice(0,4).map(read))];
+  const pages=[first,...(await Promise.all([...new Set(paths)].slice(0,4).map(readHoferCategory))).map(page=>page.html)];
   return pages.flatMap(html=>[...html.matchAll(/href="(\/izdelek\/[a-z0-9-]+)"/gi)].map(m=>category.origin+m[1]));
 }
 
