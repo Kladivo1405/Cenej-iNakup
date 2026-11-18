@@ -133,6 +133,7 @@ function queryMatches(q:string,name:string,description="",weight="",brand=""):bo
  if(qt==="eggs"&&((eggSize(q)&&eggSize(name)!==eggSize(q))||(rearing(q)&&rearing(combined)!==rearing(q))))return false;
  if(/\bplenice\b/.test(norm(q))&&diaperSize(q)&&diaperSize(name)!==diaperSize(q))return false;
  if(qt==="milk"){
+   if(/\balpsko\b/.test(norm(q))&&!/\balpsko\b/.test(norm(name+" "+brand)))return false;
    const a=attributes(q),b=attributes(combined);
    if(a.lactoseFree!==b.lactoseFree||a.chocolate!==b.chocolate)return false;
    if(/\b(napitek|kislo|kondenzirano|kozje|ovcje|sojino|ovseno|rizevo|mandljevo|kokosovo)\b|\bv prahu\b/.test(title))return false;
@@ -188,16 +189,22 @@ async function searchTus(q:string){
  return await searchProductPages("Tuš",candidates.map(p=>p.permalink),(html,url)=>{
    const product=structuredProducts(html)[0];
    if(typeof product?.name!=="string")return null;
-   const description=plainText(product.description??"");
+   const ingredientsTab=html.match(/<li\s+data-id="(\d+)"\s+class="[^"]*\bingredients\b[^"]*"/i)?.[1];
+   const ingredients=ingredientsTab
+     ?plainText(html.match(new RegExp('<div class="tab-content js-tab-content[^"]*" data-id="'+ingredientsTab+'"[^>]*>([\\s\\S]*?)<\\/div>',"i"))?.[1]??"")
+     :"";
+   const milk=productType(q)==="milk";
+   const description=milk?ingredients||plainText(product.description??""):plainText(product.description??"");
+   const name=milk?milkDisplayName(product.name,description):product.name;
    const brand=brandName(product.brand);
-   if(!queryMatches(q,product.name,description,"",brand??""))return null;
+   if(!queryMatches(q,name,description,"",brand??""))return null;
    const regular=html.match(/<p class="price-regular"[^>]*>\s*<label>\s*Redna cena:\s*<\/label>\s*([\d,]+)\s*(?:€|&euro;)\s*<\/p>/i)?.[1];
    const offer=product.offers;
    // The catalogue's sale price can require a club card, coupon or minimum quantity.
    const price=regular?Number(regular.replace(",",".")):
      /price-discounted|Veljavnost akcije:/i.test(html)?null:
      offer?.priceCurrency==="EUR"?offer.price:null;
-   return makeOffer({store:"Tuš",name:product.name,description,brand,price,url,source:url});
+   return makeOffer({store:"Tuš",name,description,brand,price,url,source:url});
  });
 }
 async function searchEurospin(q:string){
@@ -258,9 +265,18 @@ async function searchLidlDairy(q:string){
   const url="https://www.lidl.si/h/mlecni-izdelki-in-jajca/h10095761";
   const response=await fetchPublic(url);
   if(!response.ok)throw new Error("Lidl HTTP "+response.status);
-  const html=await response.text();
+  const offers=lidlGridOffers(await response.text(),url,q);
+  if(offers.length||productType(q)!=="milk")return offers;
+  const term=/\balpsko\b/.test(norm(q))?"alpsko mleko":"mleko";
+  const search="https://www.lidl.si/q/search?q="+encodeURIComponent(term);
+  const results=await fetchPublic(search);
+  if(results.status===404)return [];
+  if(!results.ok)throw new Error("Lidl iskanje HTTP "+results.status);
+  return lidlGridOffers(await results.text(),search,q);
+}
+function lidlGridOffers(html:string,url:string,q:string){
   const tiles=[...html.matchAll(/\bdata-grid-data="([^"]+)"/g)];
-  if(!tiles.length)throw new Error("Lidl: neprepoznana kategorija izdelkov");
+  if(!tiles.length&&url.includes("/h/"))throw new Error("Lidl: neprepoznana kategorija izdelkov");
   const offers=new Map<string,NonNullable<ReturnType<typeof makeOffer>>>();
   const requested=parseQuantity(q);
   for(const tile of tiles){
