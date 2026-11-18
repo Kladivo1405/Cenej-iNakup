@@ -128,6 +128,12 @@ function eggSize(text:string){return text.match(/\b(?:XL|[SML])\b/i)?.[0].toUppe
 function rearing(text:string){return norm(text).match(/\b(hlevska|prosta|talna|ekoloska|baterijska)\b/)?.[0]??null;}
 function queryMatches(q:string,name:string,description="",weight="",brand=""):boolean {
  const title=norm(name);const combined=name+' '+description;
+ const requestedWords=norm(q);
+ if(/\bbaterij\w*\s+aa\b/.test(requestedWords)){
+   const battery=norm(combined+" "+weight);
+   if(!/\b(?:aa|lr6|hr6|r6)\b/.test(battery)||/\b(?:gumbn\w*|cr\d{4})\b/.test(title))return false;
+ }
+ if(/^parmezan(?:\s+\d.*)?$/.test(requestedWords)&&/\b(?:namaz|salama|omaka|juha|prigrizek)\b/.test(title))return false;
  if(/mleko za telo|losjon|lotion|milo|lonec|robcki|kopel|sampon|balzam|krema|kozmet/.test(title))return false;
  const qt=productType(q),nt=productType(name);if(qt&&nt!==qt)return false;
  if(qt==="eggs"&&((eggSize(q)&&eggSize(name)!==eggSize(q))||(rearing(q)&&rearing(combined)!==rearing(q))))return false;
@@ -450,12 +456,26 @@ function sparProductPaths(html:string,q:string):string[] {
   const milk=productType(q)==="milk";
   const requested=parseQuantity(q);
   const fat=q.match(/(\d+(?:[,.]\d+)?)\s*%/)?.[1]?.replace(",",".");
+  let models=0;
   for(const line of chunks.join("").split("\n")){
-    const record=line.match(/^[a-f0-9]+:(\{.*\})$/);
+    const record=line.match(/^[a-f0-9]+:([\[{].*)$/);
     if(!record||!line.includes('"CatalogProductModel"'))continue;
+    let root:unknown;
     try{
-      const p=JSON.parse(record[1]);
-      if(p.__typename!=="CatalogProductModel"||p.isAvailable!==true||typeof p.name!=="string"||!/^[a-z0-9-]+$/.test(p.slug))continue;
+      root=JSON.parse(record[1]);
+    }catch{continue;}
+    const pending:unknown[]=[root];
+    while(pending.length){
+      const value=pending.pop();
+      if(!value||typeof value!=="object")continue;
+      const p=value as Record<string,unknown>;
+      if(p.__typename!=="CatalogProductModel"){
+        const children=Object.values(value);
+        for(let i=children.length-1;i>=0;i--)pending.push(children[i]);
+        continue;
+      }
+      models++;
+      if(p.isAvailable!==true||typeof p.name!=="string"||typeof p.slug!=="string"||!/^[a-z0-9-]+$/.test(p.slug))continue;
       if(milk){
         const actual=parseQuantity(p.name);
         const actualFat=p.name.match(/(\d+(?:[,.]\d+)?)\s*%/)?.[1]?.replace(",",".");
@@ -463,9 +483,9 @@ function sparProductPaths(html:string,q:string):string[] {
         if(fat&&actualFat&&Number(fat)!==Number(actualFat))continue;
       }
       paths.add("/p/"+p.slug);
-    }catch{ /* Flight text can contain lines that are not JSON records. */ }
+    }
   }
- if(!chunks.length){
+ if(!chunks.length||(!models&&html.includes("CatalogProductModel"))){
     throw new Error("SPAR: neprepoznan izpis kataloga");
   }
   return [...paths];
@@ -582,7 +602,10 @@ async function handleSearch(req:Request){
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors});
  try{
   if(req.method!=="POST")return new Response(JSON.stringify({error:"POST required"}),{status:405,headers:jsonHeaders});
-  const body=await req.json();const q=String(body.query||"").trim();if(q.length<2||q.length>100)throw new Error("Vnesi iskalni niz med 2 in 100 znaki.");
+  const body=await req.json();
+  const input=String(body.query||"").trim();
+  if(input.length<2||input.length>100)throw new Error("Vnesi iskalni niz med 2 in 100 znaki.");
+  const q=/\bjajca\b/i.test(input)&&!parseQuantity(input)&&/\s[1-9]\d{0,2}$/.test(input)?input+" kos":input;
   const offers:any[]=[];
   const alternatives:any[]=[];
   const sources:Record<string,string>={};
@@ -605,7 +628,7 @@ async function handleSearch(req:Request){
     }
   }));
   const summary={total:offers.length,eligible:offers.filter(x=>x.eligible_for_basket).length,unverified:offers.filter(x=>x.price_status==="unverified").length,expired:offers.filter(x=>x.price_status==="expired").length};
-  return new Response(JSON.stringify({query:q,offers,alternatives,sources,summary,notice:"Brez dokazljive veljavnosti cene ponudba ostane nepotrjena. Pri mleku brez navedene vrste iščemo trajno mleko. Za sveže mleko dodaj sveže."}),{headers:jsonHeaders});
+  return new Response(JSON.stringify({query:input,offers,alternatives,sources,summary,notice:"Brez dokazljive veljavnosti cene ponudba ostane nepotrjena. Pri mleku brez navedene vrste iščemo trajno mleko. Za sveže mleko dodaj sveže."}),{headers:jsonHeaders});
  }catch(e){return new Response(JSON.stringify({error:String(e)}),{status:400,headers:jsonHeaders});}
 }
 
