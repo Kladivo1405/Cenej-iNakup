@@ -326,34 +326,62 @@ function milkDisplayName(name:string,details:string){
   return fat&&!name.includes("%")?name+", "+fat:name;
 }
 async function searchSitemap(store:"Lidl"|"Hofer",q:string){
-  if(store==="Lidl"){
-    const publicOffers=await searchLidlListings(q);
-    if(publicOffers.length||["milk","butter","eggs"].includes(productType(q)??""))return publicOffers;
+  const dairy=["milk","butter","eggs"].includes(productType(q)??"");
+  if(store==="Lidl"&&dairy)return await searchLidlListings(q);
+  const [details,listings]=await Promise.allSettled([
+    searchCatalogDetails(store,q),
+    store==="Lidl"?searchLidlListings(q):searchHoferListings(q)
+  ]);
+  const rows=[
+    ...(details.status==="fulfilled"?details.value:[]),
+    ...(listings.status==="fulfilled"?listings.value:[]),
+  ];
+  if(!rows.length){
+    if(details.status==="rejected")throw details.reason;
+    if(listings.status==="rejected")throw listings.reason;
   }
+  const merged=new Map<string,NonNullable<ReturnType<typeof makeOffer>>>();
+  for(const offer of rows){
+    const existing=merged.get(offer.url);
+    if(!existing||(!existing.unit&&offer.unit&&existing.price===offer.price))merged.set(offer.url,offer);
+  }
+  return [...merged.values()];
+}
+async function searchHoferListings(q:string){
+  const base=SOURCES.hofer.base;
+  const category=CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.hofer;
+  const urls=[...(category?[base+category]:[]),base+"/izdelki/vse-spuscene-cene/k/1588161418378360"];
+  const pages=await Promise.all(urls.map(readHoferCategory));
+  if(pages.every(page=>!page.html))throw new Error("Hofer: javne kategorije trenutno nedosegljive");
+  return pages.flatMap(({url,html})=>hoferGridOffers(html,url,q));
+}
+async function searchCatalogDetails(store:"Lidl"|"Hofer",q:string){
   const cfg=store==="Lidl"?SOURCES.lidl:SOURCES.hofer;
   const sitemap=cfg.base+cfg.endpoint;
-  const category=store==="Hofer"?CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.hofer:null;
-  const hoferPages=store==="Hofer"?[
-    ...(category?[cfg.base+category]:[]),
-    cfg.base+"/izdelki/vse-spuscene-cene/k/1588161418378360",
+  const dairy=store==="Hofer"&&["milk","butter","eggs"].includes(productType(q)??"");
+  const categoryUrls=dairy?[
+    cfg.base+"/izdelki/mleko-mlecni-izdelki-in-jajca/k/1588161418378170",
+    cfg.base+"/izdelki/vse-spuscene-cene/k/1588161418378360"
   ]:[];
-  const categoryPages=await Promise.all(hoferPages.map(readHoferCategory));
-  const listingOffers=categoryPages.flatMap(({url,html})=>hoferGridOffers(html,url,q));
-  if(listingOffers.length)return [...new Map(listingOffers.map(offer=>[offer.url,offer])).values()];
-  const [response,...categories]=await Promise.all([
-    fetchPublic(sitemap).catch(error=>{if(store==="Lidl")throw error;return null;}),
-    ...categoryPages.map(({url,html})=>hoferCategoryLinks(url,html))
+  const [sitemapResult,...categories]=await Promise.all([
+    fetchPublic(sitemap).then(async response=>{
+      if(!response.ok)throw new Error(store+" sitemap HTTP "+response.status);
+      const xml=sitemap.endsWith(".gz")
+        ?await new Response(response.body!.pipeThrough(new DecompressionStream("gzip"))).text()
+        :await response.text();
+      return {links:[...xml.matchAll(/<loc>([^<]+)<\/loc>/gi)].map(m=>m[1].trim()),error:null};
+    }).catch(error=>({links:[],error})),
+    ...categoryUrls.map(async url=>{
+      const {html}=await readHoferCategory(url);
+      return {links:await hoferCategoryLinks(url,html),error:null};
+    })
   ]);
-  if(response&&!response.ok&&store==="Lidl")throw new Error(store+" sitemap HTTP "+response.status);
-  const xml=!response?.ok?"":sitemap.endsWith(".gz")
-    ?await new Response(response.body!.pipeThrough(new DecompressionStream("gzip"))).text()
-    :await response.text();
+  const links=categories.flatMap(category=>category.links).concat(sitemapResult.links);
+  if(!links.length&&sitemapResult.error)throw sitemapResult.error;
   const terms=discoveryTerms(q);
   if(!terms.length)return [];
   const path=store==="Hofer"?/^\/izdelek\/[a-z0-9-]+$/:/^\/p\/[a-z0-9-]+\/p\d+$/;
-  const links=categories.flat();
-  links.push(...[...xml.matchAll(/<loc>([^<]+)<\/loc>/gi)].map(m=>m[1].trim()));
-  if(!links.length&&!response?.ok)throw new Error(store+": javne strani trenutno nedosegljive");
+
   const candidates=[...new Set(links)].flatMap(link=>{
     try{
       const url=new URL(link);
