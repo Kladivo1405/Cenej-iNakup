@@ -81,7 +81,9 @@ function renderAlternatives(item,store,line){
 // Product prices transcribed from Lidl receipts, using purchases without a listed discount.
 const lidlReceiptPrices=[
  {pattern:/^poli narezek$/,name:'Poli narezek',price:2.29,receiptDate:'20. 11. 2026'},
- {pattern:/^(?:trajno )?mleko 3[,.]5\s*%(?:\s*(?:1\s*l|1000\s*ml))?$/,name:'Trajno mleko 3,5 %',price:0.93,receiptDate:'17. 11. 2026'},
+ {pattern:/^(?:trajno )?mleko 3[,.]5\s*%$/,name:'Trajno mleko 3,5 %',price:0.93,receiptDate:'17. 11. 2026'},
+ {pattern:/^(?:grski jogurt|jogurt na grski nacin)$/,name:'Jogurt na grški način',price:1.15,receiptDate:'14. 11. 2026',referenceOnly:true},
+ {pattern:/^sadna kasa$/,name:'Marelična kaša s 3 žiti',price:1.18,receiptDate:'20. 11. 2026',referenceOnly:true},
  {pattern:/^kajzeric[ae]$/,name:'Kajzerica',unit:'1 kos',price:0.21,receiptDate:'6. 11. 2026'},
  {pattern:/^(?:belo vino|chardonnay)$/,name:'Chardonnay',price:4.98,receiptDate:'17. 11. 2026'},
  {pattern:/^(?:cips|chio(?: cips)? soljen|soljeni cips(?: chio)?)$/,name:'Soljeni čips Chio',price:2.69,receiptDate:'17. 11. 2026'},
@@ -97,10 +99,14 @@ function liveMatches(item,store){
 function receiptPrice(item,store){
  if(store!=='Lidl'||liveMatches(item,store).length)return null;
  const query=normalize(item.name).replace(/\s+/g,' ');
- const row=lidlReceiptPrices.find(entry=>entry.pattern.test(query));
+ // Match an unlabelled package by product name for display only when a size was requested.
+ const withoutSize=query.replace(/\s+\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l)$/, '');
+ const row=lidlReceiptPrices.find(entry=>entry.pattern.test(query)||
+   (!entry.unit&&entry.pattern.test(withoutSize)));
  if(!row)return null;
  const receiptNote=query==='planinski caj'?'Možen nadomestek':
-   !row.unit&&amount(item.name)?'Pakiranje na računu ni navedeno':row.unit==='1 kg'?'Cena za kilogram':'';
+   !row.unit&&(withoutSize!==query||row.referenceOnly)?'Pakiranje na računu ni navedeno':
+   row.unit==='1 kg'?'Cena za kilogram':'';
  return {...row,store,receiptNote,price_status:'unverified',eligible_for_basket:false};
 }
 function renderReceiptPrice(row,line){
