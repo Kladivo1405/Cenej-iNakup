@@ -2,6 +2,17 @@
 :root{--green:#16834b;--dark:#10251d;--line:#e0e8e1;--muted:#617067}*{box-sizing:border-box}body{margin:0;background:#f3f6f3;color:#17271d;font:15px system-ui,-apple-system,Segoe UI,sans-serif}header{background:var(--dark);color:white;padding:22px 16px}header>div,main{max-width:1050px;margin:auto}h1{margin:0;font-size:27px}header p{margin:7px 0 0;color:#c6d7cd}main{padding:16px 13px 60px}.card{background:white;border:1px solid var(--line);border-radius:17px;padding:17px;margin-bottom:15px;box-shadow:0 5px 20px #193c2410}h2{font-size:19px;margin:0 0 12px}.muted,small{color:var(--muted)}small{font-size:12px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px}.add{display:flex;gap:8px;margin:13px 0}input,select{font:inherit;border:1px solid #cbd9ce;border-radius:9px;padding:10px;background:white;min-width:0}input{width:100%}button{cursor:pointer;border:0;border-radius:9px;padding:10px 13px;font:inherit;font-weight:650}.primary{background:var(--green);color:white}.soft{background:#e6f3ea;color:#17653b}.light{background:#edf1ed}.delete{color:#a13737;background:transparent}.line{padding:11px 0;border-bottom:1px solid var(--line)}.line:last-child{border:0}.qty{display:flex;gap:5px;align-items:center}.qty button{padding:5px 10px}.summary{background:var(--dark);color:white;border-radius:13px;padding:17px;margin:13px 0}.summary strong{font-size:26px}.summary small{color:#c5d7ca}.notice{background:#fff7e6;border:1px solid #e9d5a6;padding:11px;border-radius:10px;color:#76530f;font-size:13px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.store h2{margin:0}.storehead{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}.pill{border-radius:20px;background:#e6f3ea;color:#14753d;padding:4px 8px;font-size:11px}.warn{color:#a45c1c}.offer{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.offer>div:first-child{min-width:0}.offer b{font-size:14px}.offer a{color:#197b4c;font-size:12px}.offer select{width:100%;margin-top:7px;font-size:13px}.offerprice{font-weight:800;white-space:nowrap}.offerprice .unit-price{display:block;text-align:right;font-weight:500;margin-top:3px}.total{border-top:2px solid var(--line);margin-top:13px;padding-top:13px;font-weight:800;font-size:19px}.config{display:grid;grid-template-columns:1fr 1fr auto;gap:8px}.loading{opacity:.65}.source{font-size:12px;line-height:1.6}.status{font-size:12px;color:var(--muted)}@media(max-width:700px){.grid{grid-template-columns:1fr}.config{grid-template-columns:1fr}header h1{font-size:23px}}
 </style></head><body><header><div><h1>🛒 CenejšiNakup</h1><p>Tvoj listek. Šest trgovin. Primerljive ponudbe.</p></div></header><main>
 <section class="card"><h2>1. Moj nakupovalni listek</h2><div class="add"><input id="newItem" placeholder="Npr. mleko 1,5 % 1 l" aria-label="Nov izdelek"><button class="primary" id="addBtn">Dodaj</button></div><div id="list"></div><div class="row" style="margin-top:12px;flex-wrap:wrap"><button class="primary" id="refresh">🔎 Poišči cene</button><button class="light" id="clear">Počisti listek</button></div><p class="status" id="progress" aria-live="polite"></p><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice">Neznane, neprimerljive ali nepotrjene cene niso vključene v izračun. Delni seštevek ni popolna košarica.</div></section>
+<details class="card"><summary>Naloži račun</summary>
+<form id="receiptForm">
+<p><label>Trgovina <select id="receiptStore" required><option value="">Izberi trgovino</option></select></label></p>
+<p><label>Slika računa <input type="file" id="receiptImage" accept="image/*"></label></p>
+<p id="receiptStatus" role="status">Slika se prebere v brskalniku. Shranijo se samo potrjene postavke.</p>
+<fieldset id="receiptReview" hidden><legend>Preglej postavke</legend>
+<label>Datum nakupa <input id="receiptDate" type="date" required></label>
+<p>Popravi nazive, pakiranja in cene za eno pakiranje. Odkljukaj napačne ali znižane postavke.</p>
+<div id="receiptRows"></div>
+<button type="button" class="light" id="receiptAdd">Dodaj postavko</button>
+<button class="primary">Shrani izbrane postavke</button></fieldset></form></details>
 <h2 style="margin:22px 3px 13px">2. Košarice po trgovinah</h2><div class="grid" id="stores"></div>
 <section class="card" style="margin-top:15px"><h2>3. Povezava s Supabase</h2><p class="muted">Če si povezavo že shranil v prejšnji različici, ostane shranjena v istem brskalniku. Uporabi samo publishable/anon ključ, nikoli secret ali service_role ključa.</p><div class="config"><input id="sburl" placeholder="https://projekt.supabase.co" aria-label="Supabase URL"><input id="sbkey" placeholder="Publishable / anon key" aria-label="Supabase ključ"><button class="soft" id="save">Shrani</button></div><p class="status" id="configState"></p><details><summary>Stanje virov</summary><div class="source" id="sources">Še ni iskanja.</div></details></section><p class="muted" style="text-align:center;font-size:12px">v0.7 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
 </main><script>
@@ -10,6 +21,8 @@ const STORES=['Lidl','Hofer','Spar','Tuš','Mercator','Eurospin'];
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat('sl-SI',{style:'currency',currency:'EUR'}).format(n);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
+const receiptKey='cn_receipt_prices_v1';
+let receiptHistory=read(receiptKey,[]);
 let includeUnverified=read('cn_info_mode_v06',false);let items=read('cn_items_v04',[]), choices=read('cn_choices_v04',{}),offers={},alternatives={},upcoming={},sources={},failures={},busy=false;
 const persist=()=>{localStorage.setItem('cn_items_v04',JSON.stringify(items));localStorage.setItem('cn_choices_v04',JSON.stringify(choices))};
 const normalize=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9%,.]+/g,' ').trim();
@@ -92,7 +105,7 @@ function renderAlternatives(item,store,line){
 
 // Product prices transcribed from Lidl receipts, using purchases without a listed discount.
 const lidlReceiptPrices=[
- {pattern:/^lasko pivo(?:\s*(?:0[,.]5\s*l|500\s*ml|50\s*cl|5\s*dl))?$/,name:'Laško pivo',unit:'0,5 l',price:1.34,reportedDate:'22. 11. 2026'},
+ {pattern:/^lasko pivo(?:\s*(?:0[,.]5\s*l|500\s*ml|50\s*cl|5\s*dl))?$/,name:'Laško pivo',unit:'0,5 l',price:1.32,reportedDate:'22. 11. 2026'},
  {pattern:/^poli narezek$/,name:'Poli narezek',price:2.29,receiptDate:'20. 11. 2026'},
  {pattern:/^(?:trajno )?mleko 3[,.]5\s*%$/,name:'Trajno mleko 3,5 %',price:0.93,receiptDate:'17. 11. 2026'},
  {pattern:/^(?:grski jogurt|jogurt na grski nacin)$/,name:'Jogurt na grški način',price:1.15,receiptDate:'14. 11. 2026',referenceOnly:true},
@@ -110,7 +123,12 @@ function liveMatches(item,store){
  return (offers[item.id]||[]).filter(o=>storeOf(o)===store&&o.price_status!=='expired'&&isComparable(item,o));
 }
 function receiptPrice(item,store){
- if(store!=='Lidl'||liveMatches(item,store).length)return null;
+ if(liveMatches(item,store).length)return null;
+ const historical=importedPrice(item,store);
+ if(historical)return historical;
+ if(/^(?:plenice pampers|pampers(?: plenice)?) 52\s*(?:kos(?:ov|i|a)?|kom)$/.test(normalize(item.name)))
+   return knownPrice({store,name:'Pampers plenice',unit:'52 kos',price:20.99,reportedDate:'22. 11. 2026'});
+ if(store!=='Lidl')return null;
  const query=normalize(item.name).replace(/\s+/g,' ');
  // Match an unlabelled package by product name for display only when a size was requested.
  const withoutSize=query.replace(/\s+\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l)$/, '');
@@ -203,6 +221,122 @@ const bottom=document.createElement('div');bottom.className='total row';bottom.i
 async function search(){if(busy||!items.length)return;const url=localStorage.getItem('cn_sb_url'),key=localStorage.getItem('cn_sb_key');if(!url||!key){$('progress').textContent='Najprej shrani povezavo s Supabase.';return}busy=true;$('refresh').disabled=true;$('progress').textContent='Pridobivam ponudbe …';offers={};alternatives={};upcoming={};failures={};sources={};render();let count=0;
 for(const i of items){try{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),35000);let res;try{res=await fetch(url.replace(/\/$/,'')+'/functions/v1/search-prices',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:i.name}),signal:controller.signal})}finally{clearTimeout(timeout)}if(!res.ok)throw Error('HTTP '+res.status);const j=await res.json();offers[i.id]=Array.isArray(j.offers)?j.offers:[];alternatives[i.id]=Array.isArray(j.alternatives)?j.alternatives:[];upcoming[i.id]=Array.isArray(j.upcoming)?j.upcoming:[];Object.assign(sources,j.sources||{});count+=offers[i.id].length}catch(e){offers[i.id]=[];failures[i.id]=String(e.message||e)}$('progress').textContent='Preverjeno '+(items.indexOf(i)+1)+'/'+items.length+' izdelkov.';render()}
 $('sources').textContent=Object.entries(sources).map(([k,v])=>k+': '+v).join(' | ')||'Viri niso vrnili statusa.';$('progress').textContent=`Prejetih ponudb: ${count}. V seštevek se vključijo le ponudbe s potrjeno veljavnostjo in količino. Ostale lahko pogledaš pod opozorili.`;busy=false;$('refresh').disabled=false;render()}
+function knownPrice(row){
+ return {...row,lastKnown:true,price_status:'unverified',eligible_for_basket:false};
+}
+function receiptName(text){
+ return normalize(text.replace(/\s+\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l|kos(?:ov|i|a)?|kom)$/i,'')).replace(/\s+/g,' ');
+}
+function importedPrice(item,store){
+ const requested=amount(item.name);
+ const row=receiptHistory.find(row=>{
+   if(row.store!==store||receiptName(row.name)!==receiptName(item.name))return false;
+   if(!requested)return true;
+   const size=amount(row.unit);
+   return size&&size.kind===requested.kind&&size.count===requested.count&&Math.abs(size.v-requested.v)<0.000001;
+ });
+ return row?knownPrice(row):null;
+}
+function parseReceipt(text){
+ const found=text.match(/\b(\d{1,2})[./]\s*(\d{1,2})[./]\s*(20\d{2})\b/);
+ const date=found?[found[3],found[2].padStart(2,'0'),found[1].padStart(2,'0')].join('-'):'';
+ const rows=[];
+ for(const raw of text.split(/\r?\n/)){
+   const line=raw.trim(),key=normalize(line);
+   if(/^(za placilo|skupaj|placilo|kartica|gotovina|potrdilo za kupca)\b/.test(key))break;
+   if(/\b(popust|kupon|vzemi \d+ ali vec)\b/.test(key)){
+     if(rows.length)rows.at(-1).use=false;
+     continue;
+   }
+   const weighed=line.match(/^\d+[,.]\d+\s*kg\s*[x×]\s*(\d+[,.]\d{2})/i);
+   if(weighed&&rows.length){Object.assign(rows.at(-1),{unit:'1 kg',price:weighed[1],use:false});continue}
+   const match=line.match(/^(.+?)\s+(?:(\d+)\s*[x×]\s*)?(?:(\d+[,.]\d{2})\s+)?(\d+[,.]\d{2})(?:\s+[A-F])?$/i);
+   if(!match||(!match[2]&&!/\s[A-F]$/i.test(line))||!/[a-z]/.test(normalize(match[1])))continue;
+   rows.push({name:match[1],price:match[3]||(Number(match[4].replace(',','.'))/Number(match[2]||1)).toFixed(2),use:true});
+ }
+ return {date,rows};
+}
+async function recognizeReceipt(file){
+ const cdn='https://cdn.jsdelivr.net/npm/';
+ const base=cdn+'tesseract.js@6.0.1/dist/';
+ const {default:{createWorker}}=await import(base+'tesseract.esm.min.js');
+ const worker=await createWorker('slv',1,{
+   workerPath:base+'worker.min.js',
+   corePath:cdn+'tesseract.js-core@6.0.0',
+   langPath:cdn+'@tesseract.js-data/slv@1.0.0/4.0.0_best_int'
+ });
+ try{return (await worker.recognize(file)).data.text}
+ finally{await worker.terminate()}
+}
+function initReceiptImport(){
+ const store=$('receiptStore'),image=$('receiptImage'),review=$('receiptReview'),status=$('receiptStatus'),date=$('receiptDate'),rows=$('receiptRows');
+ for(const name of STORES)store.add(new Option(name,name));
+ function addRow(data={}){
+   const row=document.createElement('div');
+   row.className='line';
+   row.innerHTML='<label><input type="checkbox" style="width:auto"> Shrani</label> <label>Izdelek <input maxlength="100"></label> <label>Pakiranje <input maxlength="40" placeholder="Npr. 150 g"></label> <label>Cena (€) <input inputmode="decimal"></label>';
+   const [use,name,unit,price]=row.querySelectorAll('input');
+   use.checked=data.use!==false;
+   name.value=data.name||'';
+   unit.value=data.unit||'';
+   price.value=data.price||'';
+   rows.append(row);
+ }
+ $('receiptAdd').onclick=()=>addRow();
+ image.onchange=async ()=>{
+   const file=image.files[0];
+   if(!file)return;
+   image.value='';
+   if(!store.value){status.textContent='Najprej izberi trgovino.';store.focus();return}
+   review.hidden=true;
+   rows.replaceChildren();
+   date.value='';
+   store.disabled=image.disabled=true;
+   status.textContent='Berem račun …';
+   try{
+     const result=parseReceipt(await recognizeReceipt(file));
+     date.value=result.date;
+     result.rows.forEach(addRow);
+     status.textContent=result.rows.length?'Preveri prebrane postavke.':'Postavk nisem našel. Vneseš jih lahko ročno.';
+   }catch{
+     status.textContent='Branje slike ni uspelo. Poskusi z drugo sliko ali vnesi postavke ročno.';
+   }finally{
+     if(!rows.children.length)addRow();
+     review.hidden=false;
+     store.disabled=image.disabled=false;
+   }
+ };
+ $('receiptForm').onsubmit=event=>{
+   event.preventDefault();
+   if(review.hidden||!STORES.includes(store.value)||!date.value)return;
+   const imported=[];
+   for(const row of rows.children){
+     const [use,nameInput,unitInput,priceInput]=row.querySelectorAll('input');
+     if(!use.checked)continue;
+     const name=nameInput.value.trim(),unit=unitInput.value.trim(),price=numericPrice({price:priceInput.value});
+     if(!receiptName(name)||price===null||(unit&&!amount(unit))){
+       status.textContent='Preveri naziv, pakiranje in ceno označenih postavk.';return;
+     }
+     imported.push({store:store.value,name,unit:unit||(amount(name)?name:''),price,date:date.value});
+   }
+   if(!imported.length){status.textContent='Označi vsaj eno postavko.';return}
+   const latest=new Map();
+   for(const row of [...read(receiptKey,[]),...imported]){
+     const key=JSON.stringify([row.store,receiptName(row.name),amount(row.unit)]);
+     if(!latest.has(key)||latest.get(key).date<=row.date)latest.set(key,row);
+   }
+   const next=[...latest.values()].sort((a,b)=>b.date.localeCompare(a.date));
+   try{localStorage.setItem(receiptKey,JSON.stringify(next))}
+   catch{status.textContent='Shranjevanje ni uspelo. Postavke so še na voljo za urejanje.';return}
+   receiptHistory=next;
+   rows.replaceChildren();
+   date.value='';
+   review.hidden=true;
+   status.textContent='Shranjene postavke: '+imported.length+'.';
+   render();
+ };
+}
+initReceiptImport();
 $('infoMode').checked=includeUnverified;$('infoMode').onchange=e=>{includeUnverified=e.target.checked;localStorage.setItem('cn_info_mode_v06',JSON.stringify(includeUnverified));render()};$('addBtn').onclick=add;$('newItem').onkeydown=e=>{if(e.key==='Enter')add()};$('refresh').onclick=search;$('clear').onclick=()=>{if(confirm('Izbrišem celoten listek?')){items=[];offers={};choices={};persist();render()}};
 $('save').onclick=()=>{const u=$('sburl').value.trim().replace(/\/$/,''),k=$('sbkey').value.trim();if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)||!k){$('configState').textContent='Vnesi pravilen Supabase URL in publishable/anon ključ.';return}localStorage.setItem('cn_sb_url',u);localStorage.setItem('cn_sb_key',k);$('configState').textContent='Povezava je shranjena v tem brskalniku.'};$('sburl').value=localStorage.getItem('cn_sb_url')||'';$('sbkey').value=localStorage.getItem('cn_sb_key')||'';if($('sburl').value)$('configState').textContent='Shranjena povezava je bila naložena.';render();
 </script></body></html>
