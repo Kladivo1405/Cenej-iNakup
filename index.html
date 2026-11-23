@@ -1,7 +1,20 @@
 <!doctype html><html lang="sl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CenejšiNakup v0.7</title><style>
 :root{--green:#16834b;--dark:#10251d;--line:#e0e8e1;--muted:#617067}*{box-sizing:border-box}body{margin:0;background:#f3f6f3;color:#17271d;font:15px system-ui,-apple-system,Segoe UI,sans-serif}header{background:var(--dark);color:white;padding:22px 16px}header>div,main{max-width:1050px;margin:auto}h1{margin:0;font-size:27px}header p{margin:7px 0 0;color:#c6d7cd}main{padding:16px 13px 60px}.card{background:white;border:1px solid var(--line);border-radius:17px;padding:17px;margin-bottom:15px;box-shadow:0 5px 20px #193c2410}h2{font-size:19px;margin:0 0 12px}.muted,small{color:var(--muted)}small{font-size:12px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px}.add{display:flex;gap:8px;margin:13px 0}input,select{font:inherit;border:1px solid #cbd9ce;border-radius:9px;padding:10px;background:white;min-width:0}input{width:100%}button{cursor:pointer;border:0;border-radius:9px;padding:10px 13px;font:inherit;font-weight:650}.primary{background:var(--green);color:white}.soft{background:#e6f3ea;color:#17653b}.light{background:#edf1ed}.delete{color:#a13737;background:transparent}.line{padding:11px 0;border-bottom:1px solid var(--line)}.line:last-child{border:0}.qty{display:flex;gap:5px;align-items:center}.qty button{padding:5px 10px}.summary{background:var(--dark);color:white;border-radius:13px;padding:17px;margin:13px 0}.summary strong{font-size:26px}.summary small{color:#c5d7ca}.notice{background:#fff7e6;border:1px solid #e9d5a6;padding:11px;border-radius:10px;color:#76530f;font-size:13px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.store h2{margin:0}.storehead{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}.pill{border-radius:20px;background:#e6f3ea;color:#14753d;padding:4px 8px;font-size:11px}.warn{color:#a45c1c}.offer{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.offer>div:first-child{min-width:0}.offer b{font-size:14px}.offer a{color:#197b4c;font-size:12px}.offer select{width:100%;margin-top:7px;font-size:13px}.offerprice{font-weight:800;white-space:nowrap}.offerprice .unit-price{display:block;text-align:right;font-weight:500;margin-top:3px}.total{border-top:2px solid var(--line);margin-top:13px;padding-top:13px;font-weight:800;font-size:19px}.config{display:grid;grid-template-columns:1fr 1fr auto;gap:8px}.loading{opacity:.65}.source{font-size:12px;line-height:1.6}.status{font-size:12px;color:var(--muted)}@media(max-width:700px){.grid{grid-template-columns:1fr}.config{grid-template-columns:1fr}header h1{font-size:23px}}
+
+.store-navigation{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.store-tile{min-width:0;display:grid;justify-items:center;align-content:start;gap:5px;padding:12px 5px;background:#fff;color:var(--dark);border:1px solid var(--line);border-radius:14px;text-align:center}
+.store-tile:hover{border-color:var(--green);background:#f6fbf7}
+.store-tile[aria-expanded="true"]{border-color:var(--green);background:#eaf6ed;box-shadow:0 0 0 1px var(--green)}
+.store-tile:focus-visible{outline:2px solid var(--dark);outline-offset:3px}
+.store-mark{display:grid;place-items:center;width:44px;height:44px;padding:4px;border-radius:10px;background:#fff}
+.store-mark img{width:100%;height:100%;object-fit:contain}
+.store-tile small{font-weight:500}
+.store-total{font-variant-numeric:tabular-nums}
+#stores .store{border-top:3px solid var(--green)}
+#stores .storehead{gap:8px;flex-wrap:wrap}
+@media(max-width:700px){.store-navigation{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.store-tile{padding:10px 4px}}
 </style></head><body><header><div><h1>🛒 CenejšiNakup</h1><p>Tvoj listek. Šest trgovin. Primerljive ponudbe.</p></div></header><main>
-<section class="card"><h2>1. Moj nakupovalni listek</h2><div class="add"><input id="newItem" placeholder="Npr. mleko 1,5 % 1 l" aria-label="Nov izdelek"><button class="primary" id="addBtn">Dodaj</button></div><div id="list"></div><div class="row" style="margin-top:12px;flex-wrap:wrap"><button class="primary" id="refresh">🔎 Poišči cene</button><button class="light" id="clear">Počisti listek</button></div><p class="status" id="progress" aria-live="polite"></p><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice">Neznane, neprimerljive ali nepotrjene cene niso vključene v izračun. Delni seštevek ni popolna košarica.</div></section>
+<section class="card"><h2>Moj nakupovalni listek</h2><div class="add"><input id="newItem" placeholder="Npr. mleko 1,5 % 1 l" aria-label="Nov izdelek"><button class="primary" id="addBtn">Dodaj</button></div><div id="list"></div><div class="row" style="margin-top:12px;flex-wrap:wrap"><button class="primary" id="refresh">🔎 Poišči cene</button><button class="light" id="clear">Počisti listek</button></div><p class="status" id="progress" aria-live="polite"></p><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice">Neznane, neprimerljive ali nepotrjene cene niso vključene v izračun. Delni seštevek ni popolna košarica.</div></section>
 <details class="card"><summary>Naloži račun</summary>
 <form id="receiptForm">
 <p><label>Trgovina <select id="receiptStore" required><option value="">Izberi trgovino</option></select></label></p>
@@ -13,11 +26,20 @@
 <div id="receiptRows"></div>
 <button type="button" class="light" id="receiptAdd">Dodaj postavko</button>
 <button class="primary">Shrani izbrane postavke</button></fieldset></form></details>
-<h2 style="margin:22px 3px 13px">2. Košarice po trgovinah</h2><div class="grid" id="stores"></div>
-<section class="card" style="margin-top:15px"><h2>3. Povezava s Supabase</h2><p class="muted">Če si povezavo že shranil v prejšnji različici, ostane shranjena v istem brskalniku. Uporabi samo publishable/anon ključ, nikoli secret ali service_role ključa.</p><div class="config"><input id="sburl" placeholder="https://projekt.supabase.co" aria-label="Supabase URL"><input id="sbkey" placeholder="Publishable / anon key" aria-label="Supabase ključ"><button class="soft" id="save">Shrani</button></div><p class="status" id="configState"></p><details><summary>Stanje virov</summary><div class="source" id="sources">Še ni iskanja.</div></details></section><p class="muted" style="text-align:center;font-size:12px">v0.7 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
+<h2 style="margin:22px 3px 13px" id="storesHeading">Košarice po trgovinah</h2><div id="storeNav" class="store-navigation" role="group" aria-labelledby="storesHeading"></div><div id="stores"></div>
+<section class="card" style="margin-top:15px"><h2>Povezava s Supabase</h2><p class="muted">Če si povezavo že shranil v prejšnji različici, ostane shranjena v istem brskalniku. Uporabi samo publishable/anon ključ, nikoli secret ali service_role ključa.</p><div class="config"><input id="sburl" placeholder="https://projekt.supabase.co" aria-label="Supabase URL"><input id="sbkey" placeholder="Publishable / anon key" aria-label="Supabase ključ"><button class="soft" id="save">Shrani</button></div><p class="status" id="configState"></p><details><summary>Stanje virov</summary><div class="source" id="sources">Še ni iskanja.</div></details></section><p class="muted" style="text-align:center;font-size:12px">v0.7 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
 </main><script>
 'use strict';
 const STORES=['Lidl','Hofer','Spar','Tuš','Mercator','Eurospin'];
+const storeLogos={
+ Lidl:'https://www.lidl.si/cdn/assets/logos/1.0.1/lidl-logo-shop-cdn.svg',
+ Hofer:'https://www.hofer.si/favicon.svg',
+ Spar:'https://www.spar.si/favicon.ico',
+ 'Tuš':'https://www.tus.si/app/uploads/2018/10/flavicon_tus.png',
+ Mercator:'https://www.mercator.si/mysite/images/favicon/android-chrome-192x192.png',
+ Eurospin:'https://www.eurospin.si/wp-content/uploads/cropped-001_Eurospin_Logo_1200x1200px-192x192.jpg'
+};
+let openStore=null;
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat('sl-SI',{style:'currency',currency:'EUR'}).format(n);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
@@ -283,10 +305,43 @@ function renderCoupon(result,card){
  card.append(section);
 }
 function calc(store){let total=0,missing=[],unverified=[];for(const i of items){const o=selected(i,store);if(!o)missing.push(i.name);else {total+=numericPrice(o)*i.qty;if(o.eligible_for_basket!==true)unverified.push(i.name)}}const coupon=activeCoupon(store),discount=couponDiscount(store,coupon);return {store,total:total-discount,missing,unverified,coupon,discount}}
+function renderStoreNavigation(results){
+ const nav=$('storeNav');
+ nav.replaceChildren();
+ for(const result of results){
+   const button=document.createElement('button');
+   button.type='button';
+   button.className='store-tile';
+   button.setAttribute('aria-expanded',String(openStore===result.store));
+   button.setAttribute('aria-controls','stores');
+   const mark=document.createElement('span');
+   mark.className='store-mark';
+   mark.setAttribute('aria-hidden','true');
+   const logo=document.createElement('img');
+   logo.alt='';
+   logo.referrerPolicy='no-referrer';
+   logo.onerror=()=>{mark.textContent=result.store.slice(0,2).toUpperCase()};
+   logo.src=storeLogos[result.store];
+   mark.append(logo);
+   const total=document.createElement('span');
+   total.className='store-total';
+   total.textContent=items.length>result.missing.length?money(result.total):'—';
+   const coverage=document.createElement('small');
+   coverage.textContent=!items.length?'Prazen listek':result.missing.length?result.missing.length+' brez cene':'Vse cene najdene';
+   button.append(mark,document.createTextNode(result.store),total,coverage);
+   button.onclick=()=>{
+     openStore=openStore===result.store?null:result.store;
+     render();
+     nav.children[results.indexOf(result)].focus();
+   };
+   nav.append(button);
+ }
+}
 function render(){const list=$('list');list.replaceChildren();if(!items.length)list.innerHTML='<p class="muted">Listek je prazen.</p>';
 for(const i of items){const div=document.createElement('div');div.className='line row';div.innerHTML=`<div><b>${esc(i.name)}</b><br><small>${i.qty} ×</small></div><div class="qty"><button class="light" data-act="minus">−</button><b>${i.qty}</b><button class="light" data-act="plus">+</button><button class="delete" data-act="remove">✕</button></div>`;div.querySelector('[data-act=minus]').onclick=()=>modify(i.id,-1);div.querySelector('[data-act=plus]').onclick=()=>modify(i.id,1);div.querySelector('[data-act=remove]').onclick=()=>remove(i.id);list.append(div)}
 const results=STORES.map(calc),complete=results.filter(x=>!x.missing.length&&items.length),confirmed=complete.filter(x=>!x.unverified.length&&!x.discount),winner=[...confirmed].sort((a,b)=>a.total-b.total)[0],infoWinner=[...complete].sort((a,b)=>a.total-b.total)[0];$('winner').textContent=winner?winner.store+' · '+money(winner.total):'—';$('winnerNote').textContent=winner?'Najcenejša popolna košarica s potrjenimi cenami.':'Nobena trgovina nima potrjenih cen za vse izdelke.';let info=$('infoSummary');if(info){info.textContent=(includeUnverified||results.some(r=>r.discount))?(infoWinner?'Informativno najcenejša: '+infoWinner.store+' · '+money(infoWinner.total)+(infoWinner.discount?' (ocena s kuponom)':infoWinner.unverified.length?' (vključuje nepotrjene cene)':''):'Ni popolne informativne košarice.'):'Vklopi informativni način, če želiš vključiti primerljive, vendar nepotrjene ponudbe.'}
-const root=$('stores');root.replaceChildren();for(const r of results){const card=document.createElement('section');card.className='card store';const head=document.createElement('div');head.className='storehead';head.innerHTML=`<h2>${esc(r.store)}</h2>${winner&&winner.store===r.store?'<span class="pill">Najcenejša potrjena</span>':r.missing.length?`<span class="warn">⚠ ${r.missing.length} manjka</span>`:''}`;card.append(head);
+renderStoreNavigation(results);
+const root=$('stores');root.replaceChildren();for(const r of results.filter(result=>result.store===openStore)){const card=document.createElement('section');card.className='card store';const head=document.createElement('div');head.className='storehead';head.innerHTML=`<h2>${esc(r.store)}</h2>${winner&&winner.store===r.store?'<span class="pill">Najcenejša potrjena</span>':r.missing.length?`<span class="warn">⚠ ${r.missing.length} manjka</span>`:''}`;card.append(head);
 for(const i of items){const o=selected(i,r.store),unitPrice=o?unitPriceLabel(o):'',opts=options(i,r.store),line=document.createElement('div');line.className='line';if(!o){line.innerHTML=`<div class="row"><div><b>${esc(i.name)}</b><br><small>${failures[i.id]?'Iskanje ni uspelo':'Ni potrjene primerljive ponudbe'}</small></div><span class="warn">Ni cene</span></div>`;const raw=candidates(i,r.store);if(raw.length){const details=document.createElement('details');details.innerHTML=`<summary style="font-size:12px;color:#76530f;cursor:pointer;margin-top:8px">${raw.length} najdenih ponudb (nepotrjene / neprimerljive) – poglej</summary>`;for(const candidate of raw){const p=document.createElement('p');p.className='source';p.textContent=nameOf(candidate)+' · '+priceLabel(candidate)+' · '+(candidate.unit||'količina ni znana')+' · '+(candidate.price_status||'nepotrjeno');details.append(p)}line.append(details)}renderAlternatives(i,r.store,line);const hasUpcoming=renderUpcoming(i,r.store,line),receipt=receiptPrice(i,r.store);if(receipt)renderReceiptPrice(receipt,line);else if(!hasUpcoming)renderFlyerPrice(i,r.store,line)}else{line.innerHTML=`<div class="offer"><div style="flex:1"><small>${esc(i.name)} · ${i.qty} ×</small><br><b>${o.substitution_reason?"Nadomestek: ":""}${esc(nameOf(o))}</b><br><small>${esc(brandOf(o))} ${esc(o.unit||'')}</small><br><small>${o.eligible_for_basket===true?'✓ Potrjena ponudba':o.lastKnown?'Zadnja znana cena':'⚠ Nepotrjena cena – informativno'}</small><br><small>${o.checked_at?'Zajeto: '+esc(new Date(o.checked_at).toLocaleString('sl-SI')):''}</small>${o.url&&/^https:\/\//i.test(o.url)?`<br><a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">Odpri ponudbo ↗</a>`:''}</div><div class="offerprice">${money(numericPrice(o)*i.qty)}${unitPrice?`<small class="unit-price">${esc(unitPrice)}</small>`: ''}</div></div>`;if(opts.length>1){const sel=document.createElement('select');sel.setAttribute('aria-label','Izberi ponudbo: '+i.name);for(const alt of opts){const opt=document.createElement('option');opt.value=offerId(alt);opt.textContent=nameOf(alt)+' · '+priceLabel(alt);if(offerId(alt)===offerId(o))opt.selected=true;sel.append(opt)}sel.onchange=()=>{choices[choiceKey(i,r.store)]=sel.value;persist();render()};line.append(sel)}if(o.substitution_reason){const undo=document.createElement("button");undo.className="soft";undo.textContent="Odstrani nadomestek";undo.onclick=()=>{delete choices[choiceKey(i,r.store)];persist();render()};line.append(undo)}}card.append(line)}
 renderCoupon(r,card);
 const bottom=document.createElement('div');bottom.className='total row';bottom.innerHTML=`<span>${r.missing.length?'Delni seštevek':r.discount?'Ocenjeno plačilo s kuponom':r.unverified.length?'Informativni seštevek':'Skupaj'}</span><span>${items.length&&(r.total>0||!r.missing.length)?money(r.total):'Ni podatkov'}</span>`;card.append(bottom);if(r.unverified.length){const caution=document.createElement('p');caution.className='warn';caution.style.fontSize='12px';caution.textContent='Nepotrjene cene: '+r.unverified.join(', ')+'. Preveri v trgovini.';card.append(caution)}if(r.missing.length){const note=document.createElement('p');note.className='warn';note.style.fontSize='12px';note.textContent='Manjka: '+r.missing.join(', ');card.append(note)}root.append(card)} }
