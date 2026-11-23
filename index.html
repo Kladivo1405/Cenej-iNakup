@@ -322,12 +322,14 @@ function parseSparReceiptLine(line){
  return {
    name:suffix?label.slice(0,suffix.index):label,
    unit:weighted?'1 kg':suffix?.[1].toLowerCase(),
-   price:valid?price:'',
+   price:cents(price)>0?price:'',
+   receiptVerified:valid,
+   receiptByWeight:weighted,
    receiptLabel:label,
    receiptValues:[quantity,price,discount,total].map(numeric),
    use:valid&&cents(discount)===0,
    receiptDetail:'Količina '+quantity+(weighted?' kg':'')+' · Popust '+discount+' € · Znesek '+total+' €'+
-     (valid?'':' · OCR je prebral ceno '+price+' € · Preveri na računu')
+     (valid?'':' · Računica se ne ujema. Preveri odčitek')
  };
 }
 function parseReceipt(text,store){
@@ -361,11 +363,11 @@ function reconcileSparReceipts(first,second){
    const label=key(row);
    if(first.rows.filter(candidate=>key(candidate)===label).length!==1)return row;
    const matches=second.rows.filter(candidate=>key(candidate)===label);
-   if(matches.length!==1||!matches[0].price)return row;
+   if(matches.length!==1||!matches[0].receiptVerified)return row;
    const other=matches[0];
-   if(!row.price)return {...other,use:false,receiptDetail:other.receiptDetail+' · Ponovno prebrano. Preveri na računu.'};
+   if(!row.receiptVerified)return {...other,use:false,receiptDetail:other.receiptDetail+' · Ponovno prebrano. Preveri na računu.'};
    if(row.receiptValues.some((value,index)=>value!==other.receiptValues[index])){
-     return {...row,price:'',use:false,receiptDetail:row.receiptDetail+' · Odčitka se razlikujeta. Preveri na računu.'};
+     return {...row,use:false,receiptDetail:row.receiptDetail+' · Odčitka se razlikujeta. Preveri na računu.'};
    }
    return row;
  });
@@ -397,7 +399,7 @@ async function recognizeReceipt(file,store){
  });
  try{
    const first=parseReceipt((await worker.recognize(file)).data.text,store);
-   if(store!=='Spar'||(first.rows.length&&first.rows.every(row=>row.price)))return first;
+   if(store!=='Spar'||(first.rows.length&&first.rows.every(row=>row.receiptVerified)))return first;
    try{
      const image=await prepareReceiptImage(file);
      await worker.setParameters({tessedit_pageseg_mode:'6'});
@@ -413,12 +415,13 @@ function initReceiptImport(){
  function addRow(data={}){
    const row=document.createElement('div');
    row.className='line';
-   row.innerHTML='<label><input type="checkbox" style="width:auto"> Shrani</label> <label>Izdelek <input maxlength="100"></label> <label>Pakiranje <input maxlength="40" placeholder="Npr. 150 g"></label> <label>Cena (€) <input inputmode="decimal"></label>';
+   row.innerHTML='<label><input type="checkbox" style="width:auto"> Shrani</label> <label>Izdelek <input maxlength="100"></label> <label>Pakiranje <input maxlength="40" placeholder="Npr. 150 g"></label> <label><span>Cena (€)</span> <input inputmode="decimal"></label>';
    const [use,name,unit,price]=row.querySelectorAll('input');
    use.checked=data.use!==false;
    name.value=data.name||'';
    unit.value=data.unit||'';
    price.value=data.price||'';
+   if(data.receiptByWeight)row.querySelector('span').textContent='Cena na kilogram (€/kg)';
    if(data.receiptDetail){
      const detail=document.createElement('small');
      detail.textContent=data.receiptDetail;
