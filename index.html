@@ -14,6 +14,21 @@
 #stores .storehead{gap:8px;flex-wrap:wrap}
 @media(max-width:700px){.store-navigation{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.store-tile{padding:10px 4px}}
 </style></head><body><header><div><h1>🛒 CenejšiNakup</h1><p>Tvoj listek. Šest trgovin. Primerljive ponudbe.</p></div></header><main>
+<section class="card" aria-labelledby="sharedTitle">
+<h2 id="sharedTitle">Skupni nakupovalni listki</h2>
+<button id="googleLogin" type="button" class="primary">Prijavi se z Googlom</button>
+<div id="sharedAccount" hidden>
+<div class="row"><span id="sharedUser"></span><button id="googleLogout" type="button" class="light">Odjava</button></div>
+<form id="sharedCreate" class="add"><input id="sharedName" placeholder="Ime novega listka" aria-label="Ime novega listka" maxlength="80" required><button class="soft">Ustvari</button></form>
+<label><input id="sharedCopy" type="checkbox" style="width:auto" checked> Kopiraj moj trenutni listek</label>
+<div class="row" style="flex-wrap:wrap;margin-top:12px"><label>Skupni listek <select id="sharedSelect"></select></label><button id="sharedInvite" type="button" class="soft" hidden>Pripravi povabilo</button></div>
+<p id="sharedLinkRow" hidden><label>Povezava za eno pridružitev <input id="sharedLink" readonly></label><button id="sharedCopyLink" type="button" class="light">Kopiraj povezavo</button></p>
+<div id="sharedBasket" hidden>
+<form id="sharedAdd" class="add"><input id="sharedProduct" placeholder="Dodaj skupni izdelek" aria-label="Skupni izdelek" maxlength="100" required><button class="primary">Dodaj</button></form>
+<div id="sharedItems"></div>
+</div></div>
+<p id="sharedStatus" class="status" role="status"></p>
+</section>
 <section class="card">
 <label>Profil <select id="profileSelect"></select></label>
 <details id="newProfile" style="margin-top:10px"><summary>Nov profil</summary>
@@ -681,4 +696,4 @@ initProfiles();
 initReceiptImport();
 $('infoMode').checked=includeUnverified;$('infoMode').onchange=e=>{includeUnverified=e.target.checked;writeProfile(infoKey,includeUnverified);render()};$('addBtn').onclick=add;$('newItem').onkeydown=e=>{if(e.key==='Enter')add()};$('refresh').onclick=search;$('clear').onclick=()=>{if(confirm('Izbrišem celoten listek?')){items=[];offers={};choices={};persist();render()}};
 $('save').onclick=()=>{const u=$('sburl').value.trim().replace(/\/$/,''),k=$('sbkey').value.trim();if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)||!k){$('configState').textContent='Vnesi pravilen Supabase URL in publishable/anon ključ.';return}localStorage.setItem('cn_sb_url',u);localStorage.setItem('cn_sb_key',k);$('configState').textContent='Povezava je shranjena v tem brskalniku.'};$('sburl').value=localStorage.getItem('cn_sb_url')||'';$('sbkey').value=localStorage.getItem('cn_sb_key')||'';if($('sburl').value)$('configState').textContent='Shranjena povezava je bila naložena.';render();
-</script></body></html>
+</script><script type="module" src="./shared-lists.js"></script></body></html>

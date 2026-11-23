@@ -34,3 +34,20 @@
 
 ## Pomembno
 Ta paket je začetna integracijska osnova, ne trditev, da je vseh šest adapterjev že potrjeno delujočih. Za dokončanje SPAR/Mercator adapterjev in preverjanje ostalih potrebujemo resnične odzive endpointov iz dovoljenih javnih virov.
+
+## Prijava z Googlom in skupni listki
+
+V Supabase projektu `pccpqzkdmuedtshpbvph` ročno zaženi migracijo
+`supabase/migrations/002_shared_lists.sql`. V Authentication → Providers
+omogoči Google z odjemalcem OAuth iz Google Cloud Console. V konfiguraciji
+odjemalca Google dodaj preusmeritveni naslov
+`https://pccpqzkdmuedtshpbvph.supabase.co/auth/v1/callback`. V Supabase
+Authentication → URL Configuration med dovoljene preusmeritve dodaj
+`https://kladivo1405.github.io/Cenej-iNakup/`.
+
+V aplikaciji shrani obstoječi javni ključ projekta kot publishable/anon ključ.
+Prijavi se z Googlom, ustvari skupni listek in po potrebi kopiraj trenutne
+postavke. Lastnik lahko ustvari povezavo za eno pridružitev. Nova povezava
+razveljavi prejšnjo. Član lahko dodaja postavke in jih označi kot kupljene.
+Zasebni nakupovalni listki, računi in preference so vezani na lokalni profil
+v brskalniku.
