@@ -309,6 +309,25 @@ function importedPrice(item,store){
  });
  return row?knownPrice(row):null;
 }
+function parseSparReceiptLine(line){
+ const fields=line.match(/^(.+?)(?:\s*[x×+]\s*|\s+)(\d+(?:[,.]\d{1,3})?)\s*[x×]?\s+(\d+[,.]\d{2})\s+(\d+[,.]\d{2})\s+(\d+[,.]\d{2})(?:\s*[A-F])?$/i);
+ if(!fields||!/[a-z]/.test(normalize(fields[1])))return null;
+ const [,label,quantity,price,discount,total]=fields;
+ const numeric=value=>Number(value.replace(',','.'));
+ const count=numeric(quantity),weighted=/[,.]/.test(quantity)&&!Number.isInteger(count);
+ const suffix=label.match(/(?:\s+|\.)(\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l|kos(?:ov|i|a)?|kom))$/i);
+ const cents=value=>Math.round(numeric(value)*100);
+ const expected=Math.round(count*cents(price))-cents(discount);
+ const valid=count>0&&cents(price)>0&&Math.abs(expected-cents(total))<=(weighted?1:0);
+ return {
+   name:suffix?label.slice(0,suffix.index):label,
+   unit:weighted?'1 kg':suffix?.[1].toLowerCase(),
+   price:valid?price:'',
+   use:valid&&cents(discount)===0,
+   receiptDetail:'Količina '+quantity+(weighted?' kg':'')+' · Popust '+discount+' € · Znesek '+total+' €'+
+     (valid?'':' · Preveri ceno na računu')
+ };
+}
 function parseReceipt(text,store){
  const found=text.match(/\b(\d{1,2})[./]\s*(\d{1,2})[./]\s*(20\d{2})\b/);
  const date=found?[found[3],found[2].padStart(2,'0'),found[1].padStart(2,'0')].join('-'):'';
@@ -322,24 +341,13 @@ function parseReceipt(text,store){
    }
    const weighed=line.match(/^\d+[,.]\d+\s*kg\s*[x×]\s*(\d+[,.]\d{2})/i);
    if(weighed&&rows.length){Object.assign(rows.at(-1),{unit:'1 kg',price:weighed[1],use:false});continue}
-   // SPAR prints a bare quantity followed by price and sometimes extra monetary columns.
-   const spar=store==='Spar'&&line.match(/^(.+?)(?:\s*[x×]\s*|\s+)(\d+)\s*[x×]?\s+(\d+[,.]\d{2})((?:\s+[+−-]?\d+[,.]\d{2})*)(?:\s*(?:EUR|€))?(?:\s+[A-F])?$/i);
-   if(spar&&/[a-z]/.test(normalize(spar[1]))&&Number(spar[2])>0){
-     const [,label,count,price,extra]=spar;
-     const packageSuffix=label.match(/(?:\s+|\.)(\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l|kos(?:ov|i|a)?|kom))$/i);
-     const expected=Math.round(Number(price.replace(',','.'))*100)*Number(count);
-     const amounts=extra.trim().split(/\s+/).filter(Boolean).map(value=>Math.round(Number(value.replace('−','-').replace(',','.'))*100));
-     rows.push({name:packageSuffix?label.slice(0,packageSuffix.index):label,unit:packageSuffix?.[1].toLowerCase(),
-       price,use:expected>0&&amounts.every(value=>value===0||value===expected)});
+   if(store==='Spar'){
+     const row=parseSparReceiptLine(line);
+     if(row)rows.push(row);
      continue;
    }
    const match=line.match(/^(.+?)\s+(?:(\d+)\s*[x×]\s*)?(?:(\d+[,.]\d{2})\s+)?(\d+[,.]\d{2})(?:\s+[A-F])?$/i);
    if(!match||(!match[2]&&!/\s[A-F]$/i.test(line))||!/[a-z]/.test(normalize(match[1])))continue;
-   // Do not guess the price when the fallback would leave a monetary column in the product name.
-   if(store==='Spar'&&(/\d+[,.]\d{2}$/.test(match[1])||Number(match[4].replace(',','.'))===0)){
-     rows.push({name:match[1],price:'',use:false});
-     continue;
-   }
    rows.push({name:match[1],price:match[3]||(Number(match[4].replace(',','.'))/Number(match[2]||1)).toFixed(2),use:true});
  }
  return {date,rows};
@@ -368,6 +376,11 @@ function initReceiptImport(){
    name.value=data.name||'';
    unit.value=data.unit||'';
    price.value=data.price||'';
+   if(data.receiptDetail){
+     const detail=document.createElement('small');
+     detail.textContent=data.receiptDetail;
+     row.append(detail);
+   }
    rows.append(row);
  }
  $('receiptAdd').onclick=()=>addRow();
