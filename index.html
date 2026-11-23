@@ -309,7 +309,7 @@ function importedPrice(item,store){
  });
  return row?knownPrice(row):null;
 }
-function parseReceipt(text){
+function parseReceipt(text,store){
  const found=text.match(/\b(\d{1,2})[./]\s*(\d{1,2})[./]\s*(20\d{2})\b/);
  const date=found?[found[3],found[2].padStart(2,'0'),found[1].padStart(2,'0')].join('-'):'';
  const rows=[];
@@ -322,6 +322,17 @@ function parseReceipt(text){
    }
    const weighed=line.match(/^\d+[,.]\d+\s*kg\s*[x×]\s*(\d+[,.]\d{2})/i);
    if(weighed&&rows.length){Object.assign(rows.at(-1),{unit:'1 kg',price:weighed[1],use:false});continue}
+   // SPAR prints a bare quantity followed by price and sometimes extra monetary columns.
+   const spar=store==='Spar'&&line.match(/^(.+?)\s+(\d+)\s+(\d+[,.]\d{2})((?:\s+-?\d+[,.]\d{2})*)(?:\s+[A-F])?$/i);
+   if(spar&&/[a-z]/.test(normalize(spar[1]))&&Number(spar[2])>0){
+     const [,label,count,price,extra]=spar;
+     const packageSuffix=label.match(/\s+(\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l|kos(?:ov|i|a)?|kom))$/i);
+     const expected=Math.round(Number(price.replace(',','.'))*100)*Number(count);
+     const amounts=extra.trim().split(/\s+/).filter(Boolean).map(value=>Math.round(Number(value.replace(',','.'))*100));
+     rows.push({name:packageSuffix?label.slice(0,packageSuffix.index):label,unit:packageSuffix?.[1].toLowerCase(),
+       price,use:expected>0&&amounts.every(value=>value===0||value===expected)});
+     continue;
+   }
    const match=line.match(/^(.+?)\s+(?:(\d+)\s*[x×]\s*)?(?:(\d+[,.]\d{2})\s+)?(\d+[,.]\d{2})(?:\s+[A-F])?$/i);
    if(!match||(!match[2]&&!/\s[A-F]$/i.test(line))||!/[a-z]/.test(normalize(match[1])))continue;
    rows.push({name:match[1],price:match[3]||(Number(match[4].replace(',','.'))/Number(match[2]||1)).toFixed(2),use:true});
@@ -366,7 +377,7 @@ function initReceiptImport(){
    store.disabled=image.disabled=true;
    status.textContent='Berem račun …';
    try{
-     const result=parseReceipt(await recognizeReceipt(file));
+     const result=parseReceipt(await recognizeReceipt(file),store.value);
      date.value=result.date;
      result.rows.forEach(addRow);
      status.textContent=result.rows.length?'Preveri prebrane postavke.':'Postavk nisem našel. Vneseš jih lahko ročno.';
