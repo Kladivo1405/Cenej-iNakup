@@ -14,6 +14,26 @@
 #stores .storehead{gap:8px;flex-wrap:wrap}
 @media(max-width:700px){.store-navigation{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.store-tile{padding:10px 4px}}
 </style></head><body><header><div><h1>🛒 CenejšiNakup</h1><p>Tvoj listek. Šest trgovin. Primerljive ponudbe.</p></div></header><main>
+<section class="card" aria-labelledby="sharedTitle">
+<h2 id="sharedTitle">Skupni nakupovalni listki</h2>
+<button id="googleLogin" type="button" class="primary">Prijavi se z Googlom</button>
+<div id="sharedAccount" hidden>
+<div class="row"><span id="sharedUser"></span><button id="googleLogout" type="button" class="light">Odjava</button></div>
+<form id="sharedCreate" class="add"><input id="sharedName" placeholder="Ime novega listka" aria-label="Ime novega listka" maxlength="80" required><button class="soft">Ustvari</button></form>
+<label><input id="sharedCopy" type="checkbox" style="width:auto" checked> Kopiraj moj trenutni listek</label>
+<div class="row" style="flex-wrap:wrap;margin-top:12px"><label>Skupni listek <select id="sharedSelect"></select></label><button id="sharedInvite" type="button" class="soft" hidden>Pripravi povabilo</button></div>
+<p id="sharedLinkRow" hidden><label>Povezava za eno pridružitev <input id="sharedLink" readonly></label><button id="sharedCopyLink" type="button" class="light">Kopiraj povezavo</button></p>
+<div id="sharedBasket" hidden>
+<form id="sharedAdd" class="add"><input id="sharedProduct" placeholder="Dodaj skupni izdelek" aria-label="Skupni izdelek" maxlength="100" required><button class="primary">Dodaj</button></form>
+<div id="sharedItems"></div>
+</div></div>
+<p id="sharedStatus" class="status" role="status"></p>
+</section>
+<section class="card">
+<label>Profil <select id="profileSelect"></select></label>
+<details id="newProfile" style="margin-top:10px"><summary>Nov profil</summary>
+<form id="profileForm" class="add"><input id="profileName" aria-label="Ime profila" maxlength="40" required><button class="soft">Ustvari</button></form>
+</details><div id="profileStatus" class="status" role="status"></div></section>
 <section class="card"><h2>Moj nakupovalni listek</h2><div class="add"><input id="newItem" placeholder="Npr. mleko 1,5 % 1 l" aria-label="Nov izdelek"><button class="primary" id="addBtn">Dodaj</button></div><div id="list"></div><div class="row" style="margin-top:12px;flex-wrap:wrap"><button class="primary" id="refresh">🔎 Poišči cene</button><button class="light" id="clear">Počisti listek</button></div><p class="status" id="progress" aria-live="polite"></p><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice">Neznane, neprimerljive ali nepotrjene cene niso vključene v izračun. Delni seštevek ni popolna košarica.</div></section>
 <details class="card"><summary>Naloži račun</summary>
 <form id="receiptForm">
@@ -26,6 +46,14 @@
 <div id="receiptRows"></div>
 <button type="button" class="light" id="receiptAdd">Dodaj postavko</button>
 <button class="primary">Shrani izbrane postavke</button></fieldset></form></details>
+<details id="manualPrices" class="card"><summary>Vnesi ceno</summary>
+<form id="manualPriceForm" style="display:grid;gap:10px;margin-top:10px">
+<label>Trgovina <select id="manualStore" required><option value="">Izberi trgovino</option></select></label>
+<label>Izdelek <input id="manualName" maxlength="100" required></label>
+<label>Pakiranje <input id="manualUnit" maxlength="40" placeholder="Npr. 0,5 l ali 150 g"></label>
+<label>Cena pakiranja (€) <input id="manualPrice" inputmode="decimal" required></label>
+<button class="primary">Shrani ceno</button>
+</form><p id="manualStatus" class="status" role="status"></p></details>
 <h2 style="margin:22px 3px 13px" id="storesHeading">Košarice po trgovinah</h2><div id="storeNav" class="store-navigation" role="group" aria-labelledby="storesHeading"></div><div id="stores"></div>
 <section class="card" style="margin-top:15px"><h2>Povezava s Supabase</h2><p class="muted">Če si povezavo že shranil v prejšnji različici, ostane shranjena v istem brskalniku. Uporabi samo publishable/anon ključ, nikoli secret ali service_role ključa.</p><div class="config"><input id="sburl" placeholder="https://projekt.supabase.co" aria-label="Supabase URL"><input id="sbkey" placeholder="Publishable / anon key" aria-label="Supabase ključ"><button class="soft" id="save">Shrani</button></div><p class="status" id="configState"></p><details><summary>Stanje virov</summary><div class="source" id="sources">Še ni iskanja.</div></details></section><p class="muted" style="text-align:center;font-size:12px">v0.7 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
 </main><script>
@@ -43,10 +71,19 @@ let openStore=null;
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat('sl-SI',{style:'currency',currency:'EUR'}).format(n);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
-const receiptKey='cn_receipt_prices_v1';
-let receiptHistory=read(receiptKey,[]);
-let includeUnverified=read('cn_info_mode_v06',false);let items=read('cn_items_v04',[]), choices=read('cn_choices_v04',{}),offers={},alternatives={},upcoming={},sources={},failures={},busy=false;
-const persist=()=>{localStorage.setItem('cn_items_v04',JSON.stringify(items));localStorage.setItem('cn_choices_v04',JSON.stringify(choices))};
+const profilesKey='cn_profiles_v1',activeProfileKey='cn_active_profile_v1';
+const receiptKey='cn_receipt_prices_v1',itemsKey='cn_items_v04',choicesKey='cn_choices_v04';
+const infoKey='cn_info_mode_v06',preferencesKey='cn_preferences_v1';
+let profiles=read(profilesKey,[{id:'default',name:'Moj profil'}]);
+const storedProfile=read(activeProfileKey,'default');
+let activeProfile=profiles.find(p=>p.id===storedProfile)?.id||'default';
+const profileKey=key=>activeProfile==='default'?key:key+':'+activeProfile;
+const readProfile=(key,fallback)=>read(profileKey(key),fallback);
+const writeProfile=(key,value)=>localStorage.setItem(profileKey(key),JSON.stringify(value));
+let receiptHistory=readProfile(receiptKey,[]),preferences=readProfile(preferencesKey,[]);
+let includeUnverified=readProfile(infoKey,false),items=readProfile(itemsKey,[]),choices=readProfile(choicesKey,{});
+let offers={},alternatives={},upcoming={},sources={},failures={},busy=false;
+const persist=()=>{writeProfile(itemsKey,items);writeProfile(choicesKey,choices)};
 const normalize=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9%,.]+/g,' ').trim();
 function nameOf(o){return String(o.name||o.product_name||'')}
 function brandOf(o){return typeof o.brand==='string'?o.brand:(o.brand&&typeof o.brand.name==='string'?o.brand.name:'')}
@@ -227,10 +264,10 @@ function choiceKey(item,store){return item.id+'|'+store}
 function selected(item,store){const opts=options(item,store),wanted=choices[choiceKey(item,store)];return opts.find(o=>offerId(o)===wanted)||opts[0]||alternativesFor(item,store).find(o=>offerId(o)===wanted&&canUsePrice(o))||includedReceiptPrice(item,store)}
 function includedReceiptPrice(item,store){
  const row=receiptPrice(item,store);
- return row&&row.unit!=='1 kg'&&row.receiptNote!=='Možen nadomestek'?row:null;
+ return row&&(row.manual||row.unit!=='1 kg')&&row.receiptNote!=='Možen nadomestek'?row:null;
 }
 function offerId(o){return String(o.url||'')+'|'+nameOf(o)+'|'+numericPrice(o)+'|'+String(o.unit||'')}
-function add(){const name=$('newItem').value.trim();if(!name)return;items.push({id:(crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random())),name,qty:1});$('newItem').value='';persist();render()}
+function add(){const name=$('newItem').value.trim();if(!name)return;items.push({id:(crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random())),name,qty:1});rememberProduct(name);$('newItem').value='';renderSuggestions();persist();render()}
 function modify(id,delta){items=items.map(i=>i.id===id?{...i,qty:Math.max(1,i.qty+delta)}:i);persist();render()}
 function remove(id){items=items.filter(i=>i.id!==id);delete offers[id];delete alternatives[id];delete upcoming[id];persist();render()}
 const couponSources={
@@ -344,6 +381,16 @@ renderStoreNavigation(results);
 const root=$('stores');root.replaceChildren();for(const r of results.filter(result=>result.store===openStore)){const card=document.createElement('section');card.className='card store';const head=document.createElement('div');head.className='storehead';head.innerHTML=`<h2>${esc(r.store)}</h2>${winner&&winner.store===r.store?'<span class="pill">Najcenejša potrjena</span>':r.missing.length?`<span class="warn">⚠ ${r.missing.length} manjka</span>`:''}`;card.append(head);
 for(const i of items){const o=selected(i,r.store),unitPrice=o?unitPriceLabel(o):'',opts=options(i,r.store),line=document.createElement('div');line.className='line';if(!o){line.innerHTML=`<div class="row"><div><b>${esc(i.name)}</b><br><small>${failures[i.id]?'Iskanje ni uspelo':'Ni potrjene primerljive ponudbe'}</small></div><span class="warn">Ni cene</span></div>`;const raw=candidates(i,r.store);if(raw.length){const details=document.createElement('details');details.innerHTML=`<summary style="font-size:12px;color:#76530f;cursor:pointer;margin-top:8px">${raw.length} najdenih ponudb (nepotrjene / neprimerljive) – poglej</summary>`;for(const candidate of raw){const p=document.createElement('p');p.className='source';p.textContent=nameOf(candidate)+' · '+priceLabel(candidate)+' · '+(candidate.unit||'količina ni znana')+' · '+(candidate.price_status||'nepotrjeno');details.append(p)}line.append(details)}renderAlternatives(i,r.store,line);const hasUpcoming=renderUpcoming(i,r.store,line),receipt=receiptPrice(i,r.store);if(receipt)renderReceiptPrice(receipt,line);else if(!hasUpcoming)renderFlyerPrice(i,r.store,line)}else{line.innerHTML=`<div class="offer"><div style="flex:1"><small>${esc(i.name)} · ${i.qty} ×</small><br><b>${o.substitution_reason?"Nadomestek: ":""}${esc(nameOf(o))}</b><br><small>${esc(brandOf(o))} ${esc(o.unit||'')}</small><br><small>${o.eligible_for_basket===true?'✓ Potrjena ponudba':o.lastKnown?'Zadnja znana cena':'⚠ Nepotrjena cena – informativno'}</small><br><small>${o.checked_at?'Zajeto: '+esc(new Date(o.checked_at).toLocaleString('sl-SI')):''}</small>${o.url&&/^https:\/\//i.test(o.url)?`<br><a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">Odpri ponudbo ↗</a>`:''}</div><div class="offerprice">${money(numericPrice(o)*i.qty)}${unitPrice?`<small class="unit-price">${esc(unitPrice)}</small>`: ''}</div></div>`;if(opts.length>1){const sel=document.createElement('select');sel.setAttribute('aria-label','Izberi ponudbo: '+i.name);for(const alt of opts){const opt=document.createElement('option');opt.value=offerId(alt);opt.textContent=nameOf(alt)+' · '+priceLabel(alt);if(offerId(alt)===offerId(o))opt.selected=true;sel.append(opt)}sel.onchange=()=>{choices[choiceKey(i,r.store)]=sel.value;persist();render()};line.append(sel)}if(o.substitution_reason){const undo=document.createElement("button");undo.className="soft";undo.textContent="Odstrani nadomestek";undo.onclick=()=>{delete choices[choiceKey(i,r.store)];persist();render()};line.append(undo)}}card.append(line)}
 renderCoupon(r,card);
+const manualButton=document.createElement('button');
+manualButton.type='button';
+manualButton.className='soft';
+manualButton.textContent='Vnesi ceno za '+r.store;
+manualButton.onclick=()=>{
+ $('manualPrices').open=true;
+ $('manualStore').value=r.store;
+ $('manualName').focus();
+};
+card.append(manualButton);
 const bottom=document.createElement('div');bottom.className='total row';bottom.innerHTML=`<span>${r.missing.length?'Delni seštevek':r.discount?'Ocenjeno plačilo s kuponom':r.unverified.length?'Informativni seštevek':'Skupaj'}</span><span>${items.length&&(r.total>0||!r.missing.length)?money(r.total):'Ni podatkov'}</span>`;card.append(bottom);if(r.unverified.length){const caution=document.createElement('p');caution.className='warn';caution.style.fontSize='12px';caution.textContent='Nepotrjene cene: '+r.unverified.join(', ')+'. Preveri v trgovini.';card.append(caution)}if(r.missing.length){const note=document.createElement('p');note.className='warn';note.style.fontSize='12px';note.textContent='Manjka: '+r.missing.join(', ');card.append(note)}root.append(card)} }
 async function search(){if(busy||!items.length)return;const url=localStorage.getItem('cn_sb_url'),key=localStorage.getItem('cn_sb_key');if(!url||!key){$('progress').textContent='Najprej shrani povezavo s Supabase.';return}busy=true;$('refresh').disabled=true;$('progress').textContent='Pridobivam ponudbe …';offers={};alternatives={};upcoming={};failures={};sources={};render();let count=0;
 for(const i of items){try{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),35000);let res;try{res=await fetch(url.replace(/\/$/,'')+'/functions/v1/search-prices',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:i.name}),signal:controller.signal})}finally{clearTimeout(timeout)}if(!res.ok)throw Error('HTTP '+res.status);const j=await res.json();offers[i.id]=Array.isArray(j.offers)?j.offers:[];alternatives[i.id]=Array.isArray(j.alternatives)?j.alternatives:[];upcoming[i.id]=Array.isArray(j.upcoming)?j.upcoming:[];Object.assign(sources,j.sources||{});count+=offers[i.id].length}catch(e){offers[i.id]=[];failures[i.id]=String(e.message||e)}$('progress').textContent='Preverjeno '+(items.indexOf(i)+1)+'/'+items.length+' izdelkov.';render()}
@@ -522,15 +569,8 @@ function initReceiptImport(){
      imported.push({store:store.value,name,unit:unit||(amount(name)?name:''),price,date:date.value});
    }
    if(!imported.length){status.textContent='Označi vsaj eno postavko.';return}
-   const latest=new Map();
-   for(const row of [...read(receiptKey,[]),...imported]){
-     const key=JSON.stringify([row.store,receiptName(row.name),amount(row.unit)]);
-     if(!latest.has(key)||latest.get(key).date<=row.date)latest.set(key,row);
-   }
-   const next=[...latest.values()].sort((a,b)=>b.date.localeCompare(a.date));
-   try{localStorage.setItem(receiptKey,JSON.stringify(next))}
+   try{savePrices(imported)}
    catch{status.textContent='Shranjevanje ni uspelo. Postavke so še na voljo za urejanje.';return}
-   receiptHistory=next;
    rows.replaceChildren();
    date.value='';
    review.hidden=true;
@@ -538,7 +578,122 @@ function initReceiptImport(){
    render();
  };
 }
+function savePrices(imported){
+ const latest=new Map();
+ for(const row of [...readProfile(receiptKey,[]),...imported]){
+   const key=JSON.stringify([row.store,receiptName(row.name),amount(row.unit)]);
+   if(!latest.has(key)||latest.get(key).date<=row.date)latest.set(key,row);
+ }
+ const next=[...latest.values()].sort((a,b)=>b.date.localeCompare(a.date));
+ writeProfile(receiptKey,next);
+ receiptHistory=next;
+ renderSuggestions();
+}
+function rememberProduct(name){
+ const key=normalize(name);
+ const previous=preferences.find(product=>normalize(product.name)===key);
+ preferences=[{name,count:(previous?.count||0)+1},...preferences.filter(product=>normalize(product.name)!==key)].slice(0,200);
+ writeProfile(preferencesKey,preferences);
+}
+function renderSuggestions(){
+ const target=$('suggestions'),query=normalize($('newItem').value);
+ target.replaceChildren();
+ if(!query)return;
+ const matches=new Map();
+ for(const product of [...preferences,...receiptHistory]){
+   const key=normalize(product.name);
+   if(key!==query&&key.includes(query)&&!matches.has(key))matches.set(key,product);
+ }
+ for(const product of [...matches.values()].sort((a,b)=>(b.count||0)-(a.count||0)).slice(0,5)){
+   const button=document.createElement('button');
+   button.type='button';
+   button.className='soft';
+   button.textContent=product.name;
+   button.onclick=()=>{$('newItem').value=product.name;add();$('newItem').focus()};
+   target.append(button);
+ }
+}
+function renderProfiles(){
+ const select=$('profileSelect');
+ select.replaceChildren(...profiles.map(p=>new Option(p.name,p.id)));
+ select.value=activeProfile;
+}
+function profileReady(){
+ if(!busy&&!$('receiptImage').disabled)return true;
+ $('profileStatus').textContent='Počakaj, da se iskanje ali uvoz konča.';
+ renderProfiles();
+ return false;
+}
+function switchProfile(id){
+ if(!profileReady())return;
+ localStorage.setItem(activeProfileKey,JSON.stringify(id));
+ activeProfile=id;
+ items=readProfile(itemsKey,[]);
+ choices=readProfile(choicesKey,{});
+ receiptHistory=readProfile(receiptKey,[]);
+ preferences=readProfile(preferencesKey,[]);
+ includeUnverified=readProfile(infoKey,false);
+ offers={};alternatives={};upcoming={};sources={};failures={};
+ for(const store of STORES)delete couponSelections[store];
+ openStore=null;
+ $('infoMode').checked=includeUnverified;
+ $('newItem').value='';
+ renderSuggestions();
+ $('progress').textContent='';
+ $('sources').textContent='Še ni iskanja.';
+ $('receiptForm').reset();
+ $('receiptReview').hidden=true;
+ $('receiptRows').replaceChildren();
+ $('receiptStatus').textContent='Slika se prebere v brskalniku. Shranijo se samo potrjene postavke.';
+ $('manualPriceForm').reset();
+ $('manualStatus').textContent='';
+ $('profileStatus').textContent='';
+ renderProfiles();
+ render();
+}
+function initProfiles(){
+ renderProfiles();
+ $('profileSelect').onchange=event=>switchProfile(event.target.value);
+ $('profileForm').onsubmit=event=>{
+   event.preventDefault();
+   const input=$('profileName'),name=input.value.trim();
+   if(!normalize(name)||profiles.some(profile=>normalize(profile.name)===normalize(name))){
+     $('profileStatus').textContent='Vnesi novo, različno ime profila.';
+     return;
+   }
+   if(!profileReady())return;
+   const profile={id:crypto.randomUUID(),name};
+   const next=[...profiles,profile];
+   localStorage.setItem(profilesKey,JSON.stringify(next));
+   profiles=next;
+   switchProfile(profile.id);
+   input.value='';
+   $('newProfile').open=false;
+ };
+ const suggestions=document.createElement('div');
+ suggestions.id='suggestions';
+ suggestions.setAttribute('aria-label','Predlogi izdelkov');
+ suggestions.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
+ $('newItem').closest('.add').after(suggestions);
+ $('newItem').addEventListener('input',renderSuggestions);
+ for(const store of STORES)$('manualStore').add(new Option(store,store));
+ $('manualPriceForm').onsubmit=event=>{
+   event.preventDefault();
+   const store=$('manualStore').value,name=$('manualName').value.trim(),unit=$('manualUnit').value.trim();
+   const price=numericPrice({price:$('manualPrice').value});
+   if(!STORES.includes(store)||!receiptName(name)||price===null||(unit&&!amount(unit))){
+     $('manualStatus').textContent='Preveri trgovino, izdelek, pakiranje in ceno.';
+     return;
+   }
+   try{savePrices([{store,name,unit:unit||(amount(name)?name:''),price,manual:true,date:couponDay.format(new Date())}])}
+   catch{$('manualStatus').textContent='Shranjevanje cene ni uspelo.';return}
+   $('manualName').value=$('manualUnit').value=$('manualPrice').value='';
+   $('manualStatus').textContent='Cena je shranjena v tem profilu.';
+   render();
+ };
+}
+initProfiles();
 initReceiptImport();
-$('infoMode').checked=includeUnverified;$('infoMode').onchange=e=>{includeUnverified=e.target.checked;localStorage.setItem('cn_info_mode_v06',JSON.stringify(includeUnverified));render()};$('addBtn').onclick=add;$('newItem').onkeydown=e=>{if(e.key==='Enter')add()};$('refresh').onclick=search;$('clear').onclick=()=>{if(confirm('Izbrišem celoten listek?')){items=[];offers={};choices={};persist();render()}};
+$('infoMode').checked=includeUnverified;$('infoMode').onchange=e=>{includeUnverified=e.target.checked;writeProfile(infoKey,includeUnverified);render()};$('addBtn').onclick=add;$('newItem').onkeydown=e=>{if(e.key==='Enter')add()};$('refresh').onclick=search;$('clear').onclick=()=>{if(confirm('Izbrišem celoten listek?')){items=[];offers={};choices={};persist();render()}};
 $('save').onclick=()=>{const u=$('sburl').value.trim().replace(/\/$/,''),k=$('sbkey').value.trim();if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)||!k){$('configState').textContent='Vnesi pravilen Supabase URL in publishable/anon ključ.';return}localStorage.setItem('cn_sb_url',u);localStorage.setItem('cn_sb_key',k);$('configState').textContent='Povezava je shranjena v tem brskalniku.'};$('sburl').value=localStorage.getItem('cn_sb_url')||'';$('sbkey').value=localStorage.getItem('cn_sb_key')||'';if($('sburl').value)$('configState').textContent='Shranjena povezava je bila naložena.';render();
-</script></body></html>
+</script><script type="module" src="./shared-lists.js"></script></body></html>
