@@ -323,9 +323,11 @@ function parseSparReceiptLine(line){
    name:suffix?label.slice(0,suffix.index):label,
    unit:weighted?'1 kg':suffix?.[1].toLowerCase(),
    price:valid?price:'',
+   receiptLabel:label,
+   receiptValues:[quantity,price,discount,total].map(numeric),
    use:valid&&cents(discount)===0,
    receiptDetail:'Količina '+quantity+(weighted?' kg':'')+' · Popust '+discount+' € · Znesek '+total+' €'+
-     (valid?'':' · Preveri ceno na računu')
+     (valid?'':' · OCR je prebral ceno '+price+' € · Preveri na računu')
  };
 }
 function parseReceipt(text,store){
@@ -352,7 +354,39 @@ function parseReceipt(text,store){
  }
  return {date,rows};
 }
-async function recognizeReceipt(file){
+function reconcileSparReceipts(first,second){
+ if(first.date&&second.date&&first.date!==second.date)return first;
+ const key=row=>normalize(row.receiptLabel);
+ const rows=first.rows.map(row=>{
+   const label=key(row);
+   if(first.rows.filter(candidate=>key(candidate)===label).length!==1)return row;
+   const matches=second.rows.filter(candidate=>key(candidate)===label);
+   if(matches.length!==1||!matches[0].price)return row;
+   const other=matches[0];
+   if(!row.price)return {...other,use:false,receiptDetail:other.receiptDetail+' · Ponovno prebrano. Preveri na računu.'};
+   if(row.receiptValues.some((value,index)=>value!==other.receiptValues[index])){
+     return {...row,price:'',use:false,receiptDetail:row.receiptDetail+' · Odčitka se razlikujeta. Preveri na računu.'};
+   }
+   return row;
+ });
+ return {date:first.date||second.date,rows};
+}
+async function prepareReceiptImage(file){
+ const image=await createImageBitmap(file);
+ try{
+   const scale=Math.min(2,2200/image.width,4800/image.height);
+   const canvas=document.createElement('canvas');
+   canvas.width=Math.max(1,Math.round(image.width*scale));
+   canvas.height=Math.max(1,Math.round(image.height*scale));
+   const context=canvas.getContext('2d',{alpha:false});
+   context.fillStyle='white';
+   context.fillRect(0,0,canvas.width,canvas.height);
+   context.filter='grayscale(1) contrast(1.35)';
+   context.drawImage(image,0,0,canvas.width,canvas.height);
+   return canvas;
+ }finally{image.close()}
+}
+async function recognizeReceipt(file,store){
  const cdn='https://cdn.jsdelivr.net/npm/';
  const base=cdn+'tesseract.js@6.0.1/dist/';
  const {default:{createWorker}}=await import(base+'tesseract.esm.min.js');
@@ -361,7 +395,16 @@ async function recognizeReceipt(file){
    corePath:cdn+'tesseract.js-core@6.0.0',
    langPath:cdn+'@tesseract.js-data/slv@1.0.0/4.0.0_best_int'
  });
- try{return (await worker.recognize(file)).data.text}
+ try{
+   const first=parseReceipt((await worker.recognize(file)).data.text,store);
+   if(store!=='Spar'||(first.rows.length&&first.rows.every(row=>row.price)))return first;
+   try{
+     const image=await prepareReceiptImage(file);
+     await worker.setParameters({tessedit_pageseg_mode:'6'});
+     const second=parseReceipt((await worker.recognize(image)).data.text,store);
+     return first.rows.length?reconcileSparReceipts(first,second):second;
+   }catch{return first}
+ }
  finally{await worker.terminate()}
 }
 function initReceiptImport(){
@@ -395,7 +438,7 @@ function initReceiptImport(){
    store.disabled=image.disabled=true;
    status.textContent='Berem račun …';
    try{
-     const result=parseReceipt(await recognizeReceipt(file),store.value);
+     const result=await recognizeReceipt(file,store.value);
      date.value=result.date;
      result.rows.forEach(addRow);
      status.textContent=result.rows.length?'Preveri prebrane postavke.':'Postavk nisem našel. Vneseš jih lahko ročno.';
