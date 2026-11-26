@@ -16,7 +16,7 @@ let client, account, lists = [], current = '', generation = 0, rowsSignature = '
 let loadingClient, updating = false;
 const status = message => { byId('sharedStatus').textContent = message; };
 
-async function connect() {
+export async function connect() {
   if (client) return client;
   const key = localStorage.getItem('cn_sb_key');
   if (!key || localStorage.getItem('cn_sb_url')?.replace(/\/$/, '') !== project) {

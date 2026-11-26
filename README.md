@@ -51,3 +51,18 @@ postavke. Lastnik lahko ustvari povezavo za eno pridružitev. Nova povezava
 razveljavi prejšnjo. Član lahko dodaja postavke in jih označi kot kupljene.
 Zasebni nakupovalni listki, računi in preference so vezani na lokalni profil
 v brskalniku.
+
+## Branje računov z AI
+
+Privzeti način »AI« uporablja prijavo z Googlom. Sliko pošlje funkciji
+`read-receipt`, ta pa jo za prepoznavanje posreduje OpenAI. CenejšiNakup ne
+shranjuje slike. Uporabnik lahko izbere lokalno branje v brskalniku ali potrdi
+predlagane postavke za lokalno shranjevanje.
+
+V Supabase Dashboard dodaj Edge Function secret `OPENAI_API_KEY` in objavi
+funkcijo `read-receipt` iz `supabase/functions/read-receipt/index.ts`. Funkcija
+preveri uporabniško sejo z Authom pred klicem modela. Če preverjanje JWT na
+prehodu Supabase zavrne veljavne seje projekta, ga izklopi samo za
+`read-receipt`, saj funkcija opravi lastno preverjanje. Klici modela porabljajo
+sredstva projekta OpenAI. Branje brez prijave ali brez delujoče funkcije se
+samodejno nadaljuje lokalno.
