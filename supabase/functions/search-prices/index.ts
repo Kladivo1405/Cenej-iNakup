@@ -126,9 +126,18 @@ function diaperSize(text:string){
 }
 function eggSize(text:string){return text.match(/\b(?:XL|[SML])\b/i)?.[0].toUpperCase()??null;}
 function rearing(text:string){return norm(text).match(/\b(hlevska|prosta|talna|ekoloska|baterijska)\b/)?.[0]??null;}
+function greekYogurt(text:string){
+ const words=norm(text);
+ return /\bjogurt(?:a)?\b/.test(words)&&/\b(?:grski|grskem|grski nacin|greek)\b/.test(words);
+}
+function greekYogurtTerms(q:string){
+ return searchWords(q).filter(word=>!["grski","grskem","nacin","greek","jogurt","jogurta"].includes(word));
+}
 function queryMatches(q:string,name:string,description="",weight="",brand=""):boolean {
  const title=norm(name);const combined=name+' '+description;
  const requestedWords=norm(q);
+ const greek=greekYogurt(q);
+ if(greek&&!greekYogurt(name))return false;
  if(/\bbaterij\w*\s+aa\b/.test(requestedWords)){
    const battery=norm(combined+" "+weight);
    if(!/\b(?:aa|lr6|hr6|r6)\b/.test(battery)||/\b(?:gumbn\w*|cr\d{4})\b/.test(title))return false;
@@ -153,9 +162,9 @@ function queryMatches(q:string,name:string,description="",weight="",brand=""):bo
  if(requested&&!sameQuantity(requested,actual))return false;
  if(!qt||qt==="eggs"){
    const terms=/\bplenice\b/.test(norm(q))&&diaperSize(q)?q.replace(/\b(?:velikost|vel|size|maxi|junior|midi|s)\s*\d{1,2}\b|\bs\d{1,2}\b/gi," "):q;
-   const meaningful=searchWords(terms);
+   const meaningful=greek?greekYogurtTerms(terms):searchWords(terms);
    const words=new Set(norm(name+" "+brand).split(" "));
-   if(!meaningful.length||!meaningful.every(word=>words.has(word)))return false;
+   if((!greek&&!meaningful.length)||!meaningful.every(word=>words.has(word)))return false;
  }
  return true;
 }
@@ -526,15 +535,22 @@ function mercatorDetail(html:string,url:string,q:string){
 }
 function discoveryTerms(q:string){
   const kind=productType(q);
+  if(greekYogurt(q))return ["jogurt"];
   if(kind==="milk")return ["mleko"];
   if(kind==="butter")return ["maslo"];
   if(kind==="eggs")return ["jajca"];
   return searchWords(q);
 }
-function candidateRank(path:string,q:string,terms:string[]){
+function candidateRank(path:string,q:string,terms:string[],target=parseQuantity(q)){
   const slug=norm(path.split("/").pop()??"");
   const words=new Set(slug.split(" "));
   const hits=terms.filter(word=>words.has(word)).length;
+  if(greekYogurt(q)){
+    if(!greekYogurt(slug))return 0;
+    const size=parseQuantity(path);
+    if(!target||!size||size.unit!==target.unit||size.count!==target.count)return 1;
+    return 2+1/(1+Math.abs(size.amount-target.amount)*1000);
+  }
   if(!hits)return 0;
   const milk=productType(q)==="milk";
   const type=milkType(slug);
@@ -542,12 +558,12 @@ function candidateRank(path:string,q:string,terms:string[]){
   const fat=q.match(/(\d+(?:[,.]\d+)?)\s*%/)?.[1]?.replace(/[,.]/," ");
   return hits+(milk&&type?2:0)+(fat&&(" "+slug+" ").includes(" "+fat+" ")?4:0);
 }
-async function searchRetailer(store:"Spar"|"Mercator",q:string){
+async function searchRetailer(store:"Spar"|"Mercator",q:string,target=parseQuantity(q)){
   const spar=store==="Spar";
   const base=spar?"https://online.spar.si":"https://mercatoronline.si";
   const terms=discoveryTerms(q);
   if(!terms.length)return [];
-  const discovery=spar?base+"/search?name="+encodeURIComponent(terms.join(" ")):base+"/sitemap.xml";
+  const discovery=spar?base+"/search?name="+encodeURIComponent(greekYogurt(q)?"grški":terms.join(" ")):base+"/sitemap.xml";
   const response=await fetchPublic(discovery);
   if(!response.ok)throw new Error(store+" HTTP "+response.status);
   const body=await response.text();
@@ -555,7 +571,7 @@ async function searchRetailer(store:"Spar"|"Mercator",q:string){
   const paths=spar?sparProductPaths(body,q):[...body.matchAll(/<loc>([^<]+)<\/loc>/gi)]
     .flatMap(m=>m[1].trim().match(mercatorPath)?.[1]??[]);
   if(!spar&&!paths.length)throw new Error("Mercator: zemljevid nima povezav do izdelkov");
-  const candidates=[...new Set(paths)].map(path=>({path,rank:candidateRank(path,q,terms)}))
+  const candidates=[...new Set(paths)].map(path=>({path,rank:candidateRank(path,q,terms,target)}))
     .filter(p=>p.rank>0).sort((a,b)=>b.rank-a.rank).slice(0,12);
   const parse=spar?sparDetail:mercatorDetail;
   const out=[];
@@ -579,6 +595,15 @@ async function searchRetailer(store:"Spar"|"Mercator",q:string){
 function substitutionFor(query:string):{query:string;reason:string;rank:(offer:any)=>number}|null {
  const type=productType(query);
  const quantity=parseQuantity(query);
+ if(greekYogurt(query)&&quantity?.unit==="kg"&&quantity.count===1){
+   const relaxed=query.replace(/\b\d+(?:[,.]\d+)?\s*(?:kg|g)\b/i,"").trim();
+   return {query:relaxed,reason:"Druga velikost pakiranja",rank:offer=>{
+     const size=parseQuantity(offer.unit);
+     if(!size||size.unit!=="kg"||size.count!==1||!greekYogurt(offer.name))return Infinity;
+     const difference=Math.abs(size.amount-quantity.amount);
+     return difference>0.000001&&difference<=quantity.amount*0.25+0.000001?difference:Infinity;
+   }};
+ }
  if(type==="milk"&&quantity&&milkType(query,"uht")){
    const fat=query.match(/(\d+(?:[,.]\d+)?)\s*%/);
    if(fat){
@@ -629,11 +654,16 @@ async function handleSearch(req:Request){
       let similarCount=0;
       try{
         if(substitute){
-          const similar=(await search(substitute.query)).map(offer=>({offer,rank:substitute.rank(offer)}))
+          const found=(store==="Spar"||store==="Mercator")&&greekYogurt(q)
+            ?await searchRetailer(store,substitute.query,parseQuantity(q)):await search(substitute.query);
+          const similar=found.map(offer=>({offer,rank:substitute.rank(offer)}))
             .filter(row=>Number.isFinite(row.rank)&&row.offer.price_status!=="expired")
             .sort((a,b)=>a.rank-b.rank||a.offer.price-b.offer.price);
-          similarCount=similar.length;
-          alternatives.push(...similar.slice(0,3).map(({offer})=>({...offer,eligible_for_basket:false,substitution_reason:substitute.reason})));
+          const suggestions=greekYogurt(q)
+            ?similar.filter((entry,index)=>similar.findIndex(other=>other.rank===entry.rank&&other.offer.unit===entry.offer.unit)===index)
+            :similar;
+          similarCount=suggestions.length;
+          alternatives.push(...suggestions.slice(0,3).map(({offer})=>({...offer,eligible_for_basket:false,substitution_reason:substitute.reason})));
         }
       }catch{ /* Exact-match status remains available if search for substitutes fails. */ }
       if(store==="Lidl"&&!similarCount&&["milk","eggs"].includes(productType(q)??"")){
