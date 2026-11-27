@@ -533,9 +533,12 @@ async function recognizeReceiptWithAI(file,store){
    body:jpeg,
    signal:AbortSignal.timeout(45000)
  });
- if(!response.ok)throw new Error('AI trenutno ni dosegljiv.');
- const result=await response.json();
- if(!Array.isArray(result.rows)||!result.rows.length)throw new Error('AI ni našel postavk.');
+ const result=await response.json().catch(()=>null);
+ if(!response.ok){
+   const detail=typeof result?.error==='string'?result.error:'Supabase je vrnil HTTP '+response.status+'.';
+   throw new Error(detail);
+ }
+ if(!Array.isArray(result?.rows)||!result.rows.length)throw new Error('AI ni našel postavk.');
  return result;
 }
 function initReceiptImport(){
@@ -576,7 +579,7 @@ function initReceiptImport(){
        try{result=await recognizeReceiptWithAI(file,store.value)}
        catch(error){
          locally=true;
-         fallback=error.message==='Za branje z AI se prijavi z Googlom.'?error.message+' ':'Branje z AI ni uspelo. ';
+         fallback=(error.name==='TimeoutError'?'Branje z AI je trajalo predolgo.':error.message||'Branje z AI ni uspelo.')+' ';
          status.textContent=fallback+'Berem v brskalniku …';
        }
      }
