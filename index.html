@@ -36,7 +36,7 @@
 </details><div id="profileStatus" class="status" role="status"></div></section>
 <section class="card"><h2>Moj nakupovalni listek</h2><div class="add"><input id="newItem" placeholder="Npr. mleko 1,5 % 1 l" aria-label="Nov izdelek"><button class="primary" id="addBtn">Dodaj</button></div><div id="list"></div><div class="row" style="margin-top:12px;flex-wrap:wrap"><button class="primary" id="refresh">🔎 Poišči cene</button><button class="light" id="clear">Počisti listek</button></div><p class="status" id="progress" aria-live="polite"></p><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice">Neznane, neprimerljive ali nepotrjene cene niso vključene v izračun. Delni seštevek ni popolna košarica.</div></section>
 <details class="card"><summary>Naloži račun</summary>
-<form id="receiptForm">
+<form id="receiptForm" novalidate>
 <p><label>Trgovina <select id="receiptStore" required><option value="">Izberi trgovino</option></select></label></p>
 <p><label>Način branja <select id="receiptMode"><option value="ai">AI (privzeto)</option><option value="local">Lokalno v brskalniku</option></select></label></p>
 <p class="muted" id="receiptPrivacy">AI zahteva prijavo in pošlje sliko prek Supabase v OpenAI. Za obdelavo samo v brskalniku izberi lokalno branje.</p>
@@ -47,7 +47,8 @@
 <p>Popravi nazive, pakiranja in cene za eno pakiranje. Odkljukaj napačne ali znižane postavke.</p>
 <div id="receiptRows"></div>
 <button type="button" class="light" id="receiptAdd">Dodaj postavko</button>
-<button class="primary">Shrani izbrane postavke</button></fieldset></form></details>
+<button class="primary" type="submit">Shrani izbrane postavke</button></fieldset>
+<p id="receiptSaveStatus" class="status" role="status"></p></form></details>
 <details id="manualPrices" class="card"><summary>Vnesi ceno</summary>
 <form id="manualPriceForm" style="display:grid;gap:10px;margin-top:10px">
 <label>Trgovina <select id="manualStore" required><option value="">Izberi trgovino</option></select></label>
@@ -544,6 +545,7 @@ async function recognizeReceiptWithAI(file,store){
 function initReceiptImport(){
  const mode=$('receiptMode');
  const store=$('receiptStore'),image=$('receiptImage'),review=$('receiptReview'),status=$('receiptStatus'),date=$('receiptDate'),rows=$('receiptRows');
+ const saveStatus=$('receiptSaveStatus');
  for(const name of STORES)store.add(new Option(name,name));
  function addRow(data={}){
    const row=document.createElement('div');
@@ -569,6 +571,7 @@ function initReceiptImport(){
    image.value='';
    if(!store.value){status.textContent='Najprej izberi trgovino.';store.focus();return}
    review.hidden=true;
+   saveStatus.textContent='';
    rows.replaceChildren();
    date.value='';
    mode.disabled=store.disabled=image.disabled=true;
@@ -587,6 +590,7 @@ function initReceiptImport(){
      date.value=result.date;
      result.rows.forEach(addRow);
      status.textContent=fallback+(result.rows.length?(locally?'Lokalni odčitek. ':'Odčitek AI. ')+'Preveri postavke.':'Postavk nisem našel. Vneseš jih lahko ročno.');
+     if(!date.value)status.textContent+=' Vnesi datum nakupa z računa.';
    }catch{
      status.textContent='Branje slike ni uspelo. Poskusi z drugo sliko ali vnesi postavke ročno.';
    }finally{
@@ -597,27 +601,36 @@ function initReceiptImport(){
  };
  $('receiptForm').onsubmit=event=>{
    event.preventDefault();
-   if(review.hidden||!STORES.includes(store.value)||!date.value)return;
+   if(review.hidden)return;
+   function showError(message,field){
+     saveStatus.textContent=message;
+     field?.focus();
+   }
+   if(!STORES.includes(store.value))return showError('Izberi trgovino.',store);
+   if(!date.value||!date.validity.valid)return showError('Vnesi veljaven datum nakupa z računa.',date);
    const imported=[];
-   for(const row of rows.children){
+   for(const [index,row] of Array.from(rows.children).entries()){
      const [use,nameInput,unitInput,priceInput]=row.querySelectorAll('input');
      if(!use.checked)continue;
      const name=nameInput.value.trim(),unit=unitInput.value.trim(),price=numericPrice({price:priceInput.value});
-     if(!receiptName(name)||price===null||(unit&&!amount(unit))){
-       status.textContent='Preveri naziv, pakiranje in ceno označenih postavk.';return;
-     }
+     const prefix='Postavka '+(index+1)+' – ';
+     if(!receiptName(name))return showError(prefix+'vnesi naziv izdelka.',nameInput);
+     if(unit&&!amount(unit))return showError(prefix+'vnesi pakiranje, npr. 150 g ali 1 kos. Če ga ne poznaš, pusti polje prazno.',unitInput);
+     if(price===null)return showError(prefix+'vnesi ceno, večjo od 0 €.',priceInput);
      imported.push({store:store.value,name,unit:unit||(amount(name)?name:''),price,date:date.value});
    }
-   if(!imported.length){status.textContent='Označi vsaj eno postavko.';return}
+   if(!imported.length)return showError('Označi vsaj eno postavko za shranjevanje.',rows.querySelector('input[type="checkbox"]'));
    try{savePrices(imported)}
-   catch{status.textContent='Shranjevanje ni uspelo. Postavke so še na voljo za urejanje.';return}
+   catch{return showError('Shranjevanje ni uspelo. Postavke so še na voljo za urejanje.')}
    rows.replaceChildren();
    date.value='';
    review.hidden=true;
-   status.textContent='Shranjene postavke: '+imported.length+'.';
+   status.textContent='';
+   saveStatus.textContent='Shranjene postavke v tem profilu: '+imported.length+'.';
    render();
  };
 }
+
 function savePrices(imported){
  const latest=new Map();
  for(const row of [...readProfile(receiptKey,[]),...imported]){
@@ -684,6 +697,7 @@ function switchProfile(id){
  $('receiptForm').reset();
  $('receiptReview').hidden=true;
  $('receiptRows').replaceChildren();
+ $('receiptSaveStatus').textContent='';
  $('receiptStatus').textContent='Po branju preglej postavke in potrdi shranjevanje.';
  $('manualPriceForm').reset();
  $('manualStatus').textContent='';
