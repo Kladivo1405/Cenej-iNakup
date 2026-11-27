@@ -228,7 +228,14 @@ async function searchTus(q:string){
      ?plainText(html.match(new RegExp('<div class="tab-content js-tab-content[^"]*" data-id="'+ingredientsTab+'"[^>]*>([\\s\\S]*?)<\\/div>',"i"))?.[1]??"")
      :"";
    const milk=productType(q)==="milk";
-   const description=milk?ingredients||plainText(product.description??""):plainText(product.description??"");
+   let description=milk?ingredients||plainText(product.description??""):plainText(product.description??"");
+   // Tuš can put shelf-stability in the storage instructions instead of the title.
+   if(milk&&!milkType(product.name+" "+description)){
+     const storage=plainText(html.match(/<h4[^>]*>\s*Pogoji shranjevanja\s*<\/h4>([\s\S]*?)(?=<h4\b|<\/div>)/i)?.[1]??"");
+     if(/\bsobna temperatura\b/.test(norm(storage))&&!/\b(?:hladilnik\w*|hlajeno)\b/.test(norm(storage))){
+       description+=" Trajno mleko";
+     }
+   }
    const name=milk?milkDisplayName(product.name,description):product.name;
    const brand=brandName(product.brand);
    if(!queryMatches(q,name,description,"",brand??""))return null;
