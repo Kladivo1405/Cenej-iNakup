@@ -78,3 +78,31 @@ Za gradnjo uporabi Android SDK (platforma 35, Build Tools 35.0.0), JDK in
 `APK_STORE_PASSWORD`, nato zaženi
 `./android/build-apk.sh /absolutna/pot/CenejsiNakup.apk`. Za posodobitve
 obdrži isti podpisni ključ in povečaj `versionCode` v manifestu.
+
+## Varnostne spremembe
+
+Najprej v **Supabase → SQL Editor** uporabi
+`supabase/migrations/003_security_hardening.sql`. Nato posodobi Edge Function
+`read-receipt`. Do uporabe migracije funkcija zavrne plačljiv klic, aplikacija
+pa preklopi na lokalno branje. Obstoječi skrivni ključ OpenAI ostane nastavljen
+v Edge Functions → Secrets. Supabase funkciji zagotovi strežniški
+`SUPABASE_SERVICE_ROLE_KEY`.
+
+Branje z AI omogoča največ **15 zahtev na račun** in **120 zahtev za aplikacijo**
+na dan, po času Europe/Ljubljana. Odšteje se vsaka zahteva, ki je bila
+sprejeta za klic ponudnika, tudi če ponudnik pozneje vrne napako. Lastnik
+skupnega listka lahko članom odvzame dostop. Nova povabila nosijo žeton
+v fragmentu URL-ja, stare povezave pa ostanejo združljive.
+
+Knjižnice za prijavo, lokalni OCR in Manrope streže repozitorij. Verzije in
+integriteto paketov navaja `vendor/package-lock.json`. Datoteke so prevzete iz
+paketov Supabase JS 2.89.0, Tesseract.js 6.0.1, Tesseract.js Core 6.0.0,
+slovenskega jezikovnega modela 1.0.0 (4.0.0_best_int) in Manrope 5.2.8.
+Aplikacija omejuje vire z metaoznako CSP in nastavlja `no-referrer`.
+
+Po objavi preveri branje računa, ustvarjanje povabila in odvzem dostopa med
+dvema računoma. Za zaščito veje `main` v GitHubu odpri **Settings → Rules →
+Rulesets**, ustvari aktiven Branch Ruleset za privzeto vejo ter vključi
+**Restrict deletions**, **Block force pushes** in **Require a pull request
+before merging**. V repozitoriju z enim vzdrževalcem lahko število zahtevanih
+odobritev ostane 0, da lastnik še vedno lahko združi svoj pull request.

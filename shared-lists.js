@@ -3,34 +3,32 @@ const project = 'https://pccpqzkdmuedtshpbvph.supabase.co';
 const appUrl = new URL('.', location.href);
 const inviteKey = 'cn_pending_shared_invite';
 const address = new URL(location.href);
-const invitation = address.searchParams.get('povabilo');
+const fragmentInvite = new URLSearchParams(address.hash.slice(1)).get('povabilo');
+const invitation = fragmentInvite ?? address.searchParams.get('povabilo');
 if (invitation) {
   if (/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(invitation)) {
     sessionStorage.setItem(inviteKey, invitation);
   }
   address.searchParams.delete('povabilo');
+  if (fragmentInvite !== null) address.hash = '';
   history.replaceState(null, '', address);
 }
 
 let client, account, lists = [], current = '', generation = 0, rowsSignature = '';
-let loadingClient, updating = false;
+let updating = false;
 const status = message => { byId('sharedStatus').textContent = message; };
 
 export async function connect() {
   if (client) return client;
   const key = localStorage.getItem('cn_sb_key');
-  if (!key || localStorage.getItem('cn_sb_url')?.replace(/\/$/, '') !== project) {
+  if (!isPublicSupabaseKey(key || '') || localStorage.getItem('cn_sb_url')?.replace(/\/$/, '') !== project) {
     throw new Error('Najprej shrani povezavo s projektom CenejšiNakup v nastavitvah Supabase.');
   }
-  loadingClient ??= import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.89.0/+esm')
-    .then(({createClient}) => {
-      client = createClient(project, key, {auth: {flowType: 'pkce'}});
-      client.auth.onAuthStateChange((event, session) => {
-        setTimeout(() => syncAccount(session?.user), 0);
-      });
-      return client;
-    }).catch(error => { loadingClient = null; throw error; });
-  return loadingClient;
+  client = window.supabase.createClient(project, key, {auth: {flowType: 'pkce'}});
+  client.auth.onAuthStateChange((event, session) => {
+    setTimeout(() => syncAccount(session?.user), 0);
+  });
+  return client;
 }
 
 async function query(request) {
@@ -61,15 +59,19 @@ async function syncAccount(user) {
   byId('googleLogin').hidden = Boolean(user);
   byId('sharedBasket').hidden = true;
   byId('sharedInvite').hidden = true;
+  byId('sharedMembers').hidden = true;
+  byId('sharedMemberRows').replaceChildren();
   hideLink();
   byId('sharedItems').replaceChildren();
   if (!user) return;
   try {
-    const token = sessionStorage.getItem(inviteKey);
+    const token = sessionStorage.getItem(inviteKey), revision = generation;
     if (token) {
       sessionStorage.removeItem(inviteKey);
       try {
-        current = await query(client.rpc('join_shared_list', {invitation: token}));
+        const joined = await query(client.rpc('join_shared_list', {invitation: token}));
+        if (revision !== generation) return;
+        current = joined;
         status('Pridružil si se skupnemu listku.');
       } catch (error) { status(error.message); }
     }
@@ -100,8 +102,42 @@ async function openList(id) {
   hideLink();
   byId('sharedItems').replaceChildren();
   byId('sharedBasket').hidden = !id;
-  byId('sharedInvite').hidden = !lists.some(list => list.id === id && list.owner_id === account?.id);
-  await refreshRows();
+  const owner = lists.some(list => list.id === id && list.owner_id === account?.id);
+  byId('sharedInvite').hidden = !owner;
+  byId('sharedMembers').hidden = !owner;
+  byId('sharedMemberRows').replaceChildren();
+  await Promise.all([refreshRows(), owner ? refreshMembers() : undefined]);
+}
+
+async function refreshMembers() {
+  const listId = current, revision = generation;
+  const members = await query(client.rpc('shared_list_members_for_owner', {target: listId}));
+  if (revision !== generation) return;
+  const rows = byId('sharedMemberRows');
+  rows.replaceChildren();
+  if (!members.length) rows.textContent = 'Povabila še nihče ni sprejel.';
+  for (const member of members) {
+    const row = document.createElement('div');
+    row.className = 'line row';
+    const name = document.createElement('span');
+    name.textContent = member.email || 'Član ' + member.user_id.slice(-8);
+    name.style.overflowWrap = 'anywhere';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'light';
+    remove.textContent = 'Odvzemi dostop';
+    remove.setAttribute('aria-label', 'Odvzemi dostop: ' + name.textContent);
+    remove.onclick = action(async () => {
+      if (!confirm('Odvzamem dostop temu članu?')) return;
+      const removed = await query(client.rpc('remove_shared_list_member', {target: listId, member: member.user_id}));
+      if (revision !== generation) return;
+      hideLink();
+      status(removed ? 'Dostop je odvzet. Neuporabljeno povabilo je razveljavljeno.' : 'Član nima več dostopa.');
+      await refreshMembers();
+    });
+    row.append(name, remove);
+    rows.append(row);
+  }
 }
 
 async function refreshRows() {
@@ -110,6 +146,15 @@ async function refreshRows() {
   const rows = await query(client.from('shared_list_items')
     .select('id,name,qty,bought').eq('list_id',listId).order('created_at').order('id'));
   if (revision !== generation) return;
+  if (!rows.length && !lists.some(list => list.id === listId && list.owner_id === account.id)) {
+    const available = await query(client.from('shared_lists').select('id').eq('id', listId).maybeSingle());
+    if (revision !== generation) return;
+    if (!available) {
+      status('Dostop do tega listka je bil odvzet.');
+      await refreshLists();
+      return;
+    }
+  }
   const signature = JSON.stringify(rows);
   if (signature === rowsSignature) return;
   rowsSignature = signature;
@@ -181,7 +226,7 @@ byId('sharedAdd').onsubmit = action(async () => {
 byId('sharedInvite').onclick = action(async () => {
   const token = await query(client.rpc('invite_to_shared_list',{target:current}));
   const link = new URL(appUrl);
-  link.searchParams.set('povabilo',token);
+  link.hash = new URLSearchParams({povabilo: token}).toString();
   byId('sharedLink').value = link.href;
   byId('sharedLinkRow').hidden = false;
   status('Povezava velja sedem dni in omogoča eno pridružitev.');
@@ -200,5 +245,5 @@ byId('sharedCopyLink').onclick = action(async () => {
 if (localStorage.getItem('cn_sb_key')) connect().catch(error => status(error.message));
 if (invitation) status('Prijavi se z Googlom, da se pridružiš listku.');
 setInterval(() => {
-  if (!document.hidden && !updating) refreshRows().catch(error => status(error.message));
+  if (!document.hidden && !updating && byId('sharedTools').open) refreshRows().catch(error => status(error.message));
 }, 4000);
