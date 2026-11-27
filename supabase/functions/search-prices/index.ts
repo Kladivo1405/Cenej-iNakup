@@ -179,7 +179,7 @@ function makeOffer(input:any){
   const name=decodeHtml(input.name??"Neimenovan izdelek").replace(/\s+/g," ").trim();
   const quantity=packageQuantity(name,input.weight,input.description);
   const valid=validity(input.priceValidUntil);
-  return {store:input.store,name,brand:brandName(input.brand),price,unit:quantity?.label??null,unit_price:quantity?price/quantity.amount:null,unit_measure:quantity?.unit??null,price_valid_until:valid.date,price_status:valid.status,eligible_for_basket:false,url:input.url??null,source:input.source??null,checked_at:new Date().toISOString()};
+  return {store:input.store,name,brand:brandName(input.brand),price,unit:quantity?.label??null,unit_price:quantity?price/quantity.amount:null,unit_measure:quantity?.unit??null,price_valid_until:valid.date,price_status:valid.status,coupon_condition:input.couponCondition as string|undefined,eligible_for_basket:false,url:input.url??null,source:input.source??null,checked_at:new Date().toISOString()};
 }
 function applyBasketEligibility(offer:any,query:string,description=""){
   const requested=parseQuantity(query);
@@ -245,7 +245,12 @@ async function searchTus(q:string){
    const price=regular?Number(regular.replace(",",".")):
      /price-discounted|Veljavnost akcije:/i.test(html)?null:
      offer?.priceCurrency==="EUR"?offer.price:null;
-   return makeOffer({store:"Tuš",name,description,brand,price,url,source:url});
+   const result=makeOffer({store:"Tuš",name,description,brand,price,url,source:url});
+   if(!result||!/\bbaterij\w*\b/.test(norm(name)))return result;
+   const text=norm(name+" "+description);
+   const aa=/\b(?:aa|lr6|hr6|r6)\b/.test(text);
+   const other=/\b(?:aaa|lr03|hr03|r03|cr\d{4}|gumbn\w*)\b/.test(text);
+   return {...result,battery_variant:aa?(other?"mixed":"aa"):other?"other":"unknown"};
  });
 }
 async function searchEurospin(q:string){
@@ -621,15 +626,6 @@ async function searchRetailer(store:"Spar"|"Mercator",q:string,target=parseQuant
 function substitutionFor(query:string):{query:string;reason:string;rank:(offer:any)=>number}|null {
  const type=productType(query);
  const quantity=parseQuantity(query);
- if(greekYogurt(query)&&quantity?.unit==="kg"&&quantity.count===1){
-   const relaxed=query.replace(/\b\d+(?:[,.]\d+)?\s*(?:kg|g)\b/i,"").trim();
-   return {query:relaxed,reason:"Druga velikost pakiranja",rank:offer=>{
-     const size=parseQuantity(offer.unit);
-     if(!size||size.unit!=="kg"||size.count!==1||!greekYogurt(offer.name))return Infinity;
-     const difference=Math.abs(size.amount-quantity.amount);
-     return difference>0.000001&&difference<=quantity.amount*0.25+0.000001?difference:Infinity;
-   }};
- }
  if(type==="milk"&&quantity&&milkType(query,"uht")){
    const fat=query.match(/(\d+(?:[,.]\d+)?)\s*%/);
    if(fat){
@@ -657,6 +653,27 @@ function substitutionFor(query:string):{query:string;reason:string;rank:(offer:a
  return null;
 }
 
+function packageSubstitution(query:string){
+ const target=parseQuantity(query);
+ if(!target)return null;
+ const relaxed=query.replace(/\b(?:\d+\s*[x×]\s*)?\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l)\b(?:\s*[x×]\s*\d+\b)?|\b\d+\s*(?:kos(?:ov|i|a)?\b|kom\b|pieces\b|\/\s*1\b)/i,"").replace(/\s+/g," ").trim();
+ if(relaxed===query||!discoveryTerms(relaxed).length)return null;
+ const eggs=productType(query)==="eggs";
+ return {query:relaxed,reason:"Druga velikost pakiranja",rank:(offer:any)=>{
+   const size=parseQuantity(offer.unit);
+   if(!size||size.unit!==target.unit||sameQuantity(target,size))return Infinity;
+   if(eggs&&/\b(?:testenine|rezanci|namaz|sendvic|pecivo)\b/.test(norm(offer.name)))return Infinity;
+   const difference=Math.abs(size.amount-target.amount)/target.amount;
+   if(!eggs&&difference>0.35)return Infinity;
+   return difference+(size.count!==target.count?0.1:0);
+ }};
+}
+function batterySubstitution(query:string){
+ if(!/\bbaterij\w*\s+aa\b/.test(norm(query)))return null;
+ return {query:query.replace(/\baa\b/i,"").trim(),reason:"Različica ni določena – preveri, da izbereš AA",rank:(offer:any)=>
+   ["mixed","unknown"].includes(offer.battery_variant)?0.4:Infinity};
+}
+
 async function handleSearch(req:Request){
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors});
  try{
@@ -669,38 +686,53 @@ async function handleSearch(req:Request){
   const alternatives:any[]=[];
   const upcoming:any[]=[];
   const sources:Record<string,string>={};
-  const substitute=substitutionFor(q);
+  const substitute=substitutionFor(q),packaging=packageSubstitution(q),battery=batterySubstitution(q);
   const jobs=[["Tuš",searchTus],["Eurospin",searchEurospin],["Lidl",(term:string)=>searchSitemap("Lidl",term)],["Hofer",(term:string)=>searchSitemap("Hofer",term)],["Spar",(term:string)=>searchRetailer("Spar",term)],["Mercator",(term:string)=>searchRetailer("Mercator",term)]] as const;
   await Promise.all(jobs.map(async ([store,search])=>{
     try{
-      const rows=(await search(q)).filter(row=>row.price_status!=="expired");
+      const findAlternatives=async(rule:NonNullable<ReturnType<typeof packageSubstitution>>)=>{
+        const result=(store==="Spar"||store==="Mercator")&&greekYogurt(q)
+          ?await searchRetailer(store,rule.query,parseQuantity(q)):await search(rule.query);
+        return result.flatMap(offer=>{
+          const rank=rule.rank(offer);
+          return Number.isFinite(rank)&&offer.price_status!=="expired"&&!offer.coupon_condition
+            ?[{offer,rank,reason:rule.reason}]:[];
+        });
+      };
+      const similarSearch=Promise.allSettled([packaging,store==="Tuš"?battery:null]
+        .filter(rule=>rule!==null).map(findAlternatives));
+      const [current]=await Promise.allSettled([search(q)]);
+      const rows=current.status==="fulfilled"?current.value.filter(row=>row.price_status!=="expired"):[];
       offers.push(...rows);
-      sources[store]=rows.length+" ustreznih ponudb";
-      if(rows.length)return;
-      let similarCount=0;
-      try{
-        if(substitute){
-          const found=(store==="Spar"||store==="Mercator")&&greekYogurt(q)
-            ?await searchRetailer(store,substitute.query,parseQuantity(q)):await search(substitute.query);
-          const similar=found.map(offer=>({offer,rank:substitute.rank(offer)}))
-            .filter(row=>Number.isFinite(row.rank)&&row.offer.price_status!=="expired")
-            .sort((a,b)=>a.rank-b.rank||a.offer.price-b.offer.price);
-          const suggestions=greekYogurt(q)
-            ?similar.filter((entry,index)=>similar.findIndex(other=>other.rank===entry.rank&&other.offer.unit===entry.offer.unit)===index)
-            :similar;
-          similarCount=suggestions.length;
-          alternatives.push(...suggestions.slice(0,3).map(({offer})=>({...offer,eligible_for_basket:false,substitution_reason:substitute.reason})));
-        }
-      }catch{ /* Exact-match status remains available if search for substitutes fails. */ }
+      sources[store]=current.status==="fulfilled"?rows.length+" ustreznih ponudb":"ni podatka: "+String(current.reason).slice(0,150);
+      const exact=rows.filter(row=>!row.coupon_condition);
+      const [internal,other]=await Promise.all([
+        similarSearch,
+        Promise.allSettled(!exact.length&&substitute?[findAlternatives(substitute)]:[]),
+      ]);
+      const alternativesById=new Map<string,any>();
+      const exactIds=new Set(exact.map(offer=>offer.url));
+      for(const result of [...internal,...other])if(result.status==="fulfilled")for(const entry of result.value){
+        if(exactIds.has(entry.offer.url))continue;
+        const previous=alternativesById.get(entry.offer.url);
+        if(!previous||previous.rank>entry.rank)alternativesById.set(entry.offer.url,entry);
+      }
+      const similar=[...alternativesById.values()].sort((a,b)=>a.rank-b.rank||a.offer.price-b.offer.price).slice(0,8);
+      alternatives.push(...similar.map(({offer,rank,reason})=>({
+        ...offer,eligible_for_basket:false,substitution_reason:reason,match_score:Math.round(Math.max(30,Math.min(95,100-rank*100)))
+      })));
+      const similarCount=similar.length;
+      if(exact.length)return;
       if(store==="Lidl"&&!similarCount&&["milk","eggs"].includes(productType(q)??"")){
         try{
           const exact=await searchLidlListings(q,true);
           if(exact.length)upcoming.push(...exact.slice(0,3));
-          else if(substitute){
-            const similar=(await searchLidlListings(substitute.query,true))
-              .filter(offer=>Number.isFinite(substitute.rank(offer)))
-              .sort((a,b)=>substitute.rank(a)-substitute.rank(b));
-            upcoming.push(...similar.slice(0,3).map(offer=>({...offer,substitution_reason:substitute.reason})));
+          else if(substitute||packaging){
+            const rule=substitute??packaging!;
+            const similar=(await searchLidlListings(rule.query,true))
+              .filter(offer=>Number.isFinite(rule.rank(offer)))
+              .sort((a,b)=>rule.rank(a)-rule.rank(b));
+            upcoming.push(...similar.slice(0,3).map(offer=>({...offer,substitution_reason:rule.reason})));
           }
         }catch{ /* The preview is optional when the live listing is unavailable. */ }
       }
