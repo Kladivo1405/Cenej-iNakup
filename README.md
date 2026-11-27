@@ -66,3 +66,15 @@ prehodu Supabase zavrne veljavne seje projekta, ga izklopi samo za
 `read-receipt`, saj funkcija opravi lastno preverjanje. Klici modela porabljajo
 sredstva projekta OpenAI. Branje brez prijave ali brez delujoče funkcije se
 samodejno nadaljuje lokalno.
+
+## Android APK
+
+Androidov zaganjalnik v imeniku `android` odpre objavljeno spletno aplikacijo
+v privzetem brskalniku. Brskalniki s podporo za Custom Tabs jo odprejo v
+prilagojenem zavihku in uporabijo obstoječo sejo brskalnika.
+
+Za gradnjo uporabi Android SDK (platforma 35, Build Tools 35.0.0), JDK in
+`zip`. Nastavi `ANDROID_SDK_ROOT`, `APK_KEYSTORE`, `APK_KEY_ALIAS` in
+`APK_STORE_PASSWORD`, nato zaženi
+`./android/build-apk.sh /absolutna/pot/CenejsiNakup.apk`. Za posodobitve
+obdrži isti podpisni ključ in povečaj `versionCode` v manifestu.
