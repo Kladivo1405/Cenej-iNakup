@@ -36,18 +36,19 @@
 </details><div id="profileStatus" class="status" role="status"></div></section>
 <section class="card"><h2>Moj nakupovalni listek</h2><div class="add"><input id="newItem" placeholder="Npr. mleko 1,5 % 1 l" aria-label="Nov izdelek"><button class="primary" id="addBtn">Dodaj</button></div><div id="list"></div><div class="row" style="margin-top:12px;flex-wrap:wrap"><button class="primary" id="refresh">🔎 Poišči cene</button><button class="light" id="clear">Počisti listek</button></div><p class="status" id="progress" aria-live="polite"></p><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice">Neznane, neprimerljive ali nepotrjene cene niso vključene v izračun. Delni seštevek ni popolna košarica.</div></section>
 <details class="card"><summary>Naloži račun</summary>
-<form id="receiptForm">
+<form id="receiptForm" novalidate>
 <p><label>Trgovina <select id="receiptStore" required><option value="">Izberi trgovino</option></select></label></p>
 <p><label>Način branja <select id="receiptMode"><option value="ai">AI (privzeto)</option><option value="local">Lokalno v brskalniku</option></select></label></p>
 <p class="muted" id="receiptPrivacy">AI zahteva prijavo in pošlje sliko prek Supabase v OpenAI. Za obdelavo samo v brskalniku izberi lokalno branje.</p>
 <p><label>Slika računa <input type="file" id="receiptImage" accept="image/*"></label></p>
-<p id="receiptStatus" role="status">Po branju preglej postavke in potrdi shranjevanje.</p>
+<p id="receiptStatus" role="status" tabindex="-1">Po branju preglej postavke in potrdi shranjevanje.</p>
 <fieldset id="receiptReview" hidden><legend>Preglej postavke</legend>
 <label>Datum nakupa <input id="receiptDate" type="date" required></label>
 <p>Popravi nazive, pakiranja in cene za eno pakiranje. Odkljukaj napačne ali znižane postavke.</p>
 <div id="receiptRows"></div>
 <button type="button" class="light" id="receiptAdd">Dodaj postavko</button>
-<button class="primary">Shrani izbrane postavke</button></fieldset></form></details>
+<button type="submit" class="primary">Shrani izbrane postavke</button>
+<p id="receiptSaveStatus" class="warn" role="status"></p></fieldset></form></details>
 <details id="manualPrices" class="card"><summary>Vnesi ceno</summary>
 <form id="manualPriceForm" style="display:grid;gap:10px;margin-top:10px">
 <label>Trgovina <select id="manualStore" required><option value="">Izberi trgovino</option></select></label>
@@ -542,7 +543,7 @@ async function recognizeReceiptWithAI(file,store){
  return result;
 }
 function initReceiptImport(){
- const mode=$('receiptMode');
+ const mode=$('receiptMode'),saveStatus=$('receiptSaveStatus');
  const store=$('receiptStore'),image=$('receiptImage'),review=$('receiptReview'),status=$('receiptStatus'),date=$('receiptDate'),rows=$('receiptRows');
  for(const name of STORES)store.add(new Option(name,name));
  function addRow(data={}){
@@ -552,7 +553,9 @@ function initReceiptImport(){
    const [use,name,unit,price]=row.querySelectorAll('input');
    use.checked=data.use!==false;
    name.value=data.name||'';
-   unit.value=data.unit||'';
+   const readUnit=(data.unit||'').trim();
+   unit.value=/^(?:kos|kom|pcs?)[.]?$/i.test(readUnit)?'1 kos':
+     /^(?:pakiranje|paket|pak)[.]?$/i.test(readUnit)?'':readUnit;
    price.value=data.price||'';
    if(data.receiptByWeight)row.querySelector('span').textContent='Cena na kilogram (€/kg)';
    if(data.receiptDetail){
@@ -570,6 +573,7 @@ function initReceiptImport(){
    if(!store.value){status.textContent='Najprej izberi trgovino.';store.focus();return}
    review.hidden=true;
    rows.replaceChildren();
+   saveStatus.textContent='';
    date.value='';
    mode.disabled=store.disabled=image.disabled=true;
    status.textContent=mode.value==='ai'?'Berem račun z AI …':'Berem račun v brskalniku …';
@@ -597,25 +601,65 @@ function initReceiptImport(){
  };
  $('receiptForm').onsubmit=event=>{
    event.preventDefault();
-   if(review.hidden||!STORES.includes(store.value)||!date.value)return;
-   const imported=[];
+   if(review.hidden)return;
+   saveStatus.textContent='';
+   for(const row of rows.children){
+     row.querySelector('.receipt-row-error')?.remove();
+     for(const input of row.querySelectorAll('[aria-invalid]'))input.removeAttribute('aria-invalid');
+   }
+   if(!STORES.includes(store.value)||!date.value||!date.validity.valid){
+     const missingStore=!STORES.includes(store.value);
+     saveStatus.textContent=missingStore?'Izberi trgovino.':'Vnesi veljaven datum nakupa.';
+     (missingStore?store:date).focus();
+     return;
+   }
+   const accepted=[];
+   let invalidCount=0,firstError;
    for(const row of rows.children){
      const [use,nameInput,unitInput,priceInput]=row.querySelectorAll('input');
      if(!use.checked)continue;
      const name=nameInput.value.trim(),unit=unitInput.value.trim(),price=numericPrice({price:priceInput.value});
-     if(!receiptName(name)||price===null||(unit&&!amount(unit))){
-       status.textContent='Preveri naziv, pakiranje in ceno označenih postavk.';return;
+     const size=unit?amount(unit):null;
+     let input,message;
+     if(!receiptName(name)){input=nameInput;message='Vnesi naziv izdelka.'}
+     else if(price===null){input=priceInput;message='Vnesi ceno, večjo od 0 €.'}
+     else if(unit&&(!size||!(size.v>0)||!(size.count>0))){
+       input=unitInput;
+       message='Vnesi pakiranje, npr. 150 g, 0,5 l ali 10 kos. Če ni znano, pusti prazno.';
      }
-     imported.push({store:store.value,name,unit:unit||(amount(name)?name:''),price,date:date.value});
+     if(input){
+       input.setAttribute('aria-invalid','true');
+       const error=document.createElement('p');
+       error.className='warn receipt-row-error';
+       error.textContent=message;
+       row.append(error);
+       firstError??=input;
+       invalidCount++;
+       continue;
+     }
+     accepted.push({row,entry:{store:store.value,name,unit:unit||(amount(name)?name:''),price,date:date.value}});
    }
-   if(!imported.length){status.textContent='Označi vsaj eno postavko.';return}
-   try{savePrices(imported)}
-   catch{status.textContent='Shranjevanje ni uspelo. Postavke so še na voljo za urejanje.';return}
-   rows.replaceChildren();
-   date.value='';
-   review.hidden=true;
-   status.textContent='Shranjene postavke: '+imported.length+'.';
-   render();
+   if(!accepted.length&&!invalidCount){
+     saveStatus.textContent='Označi vsaj eno postavko.';
+     return;
+   }
+   if(accepted.length){
+     try{savePrices(accepted.map(item=>item.entry))}
+     catch{saveStatus.textContent='Shranjevanje v brskalnik ni uspelo. Postavke so še na voljo za urejanje.';return}
+   }
+   if(invalidCount){
+     for(const {row} of accepted)row.remove();
+     const message=(accepted.length?'Shranjene postavke: '+accepted.length+'. ':'')+'Za pregled: '+invalidCount+'. Popravi označena polja.';
+     status.textContent=saveStatus.textContent=message;
+     firstError.focus();
+   }else{
+     rows.replaceChildren();
+     date.value='';
+     review.hidden=true;
+     status.textContent='Shranjene postavke v tem profilu: '+accepted.length+'.';
+     status.focus();
+   }
+   if(accepted.length)render();
  };
 }
 function savePrices(imported){
@@ -683,6 +727,7 @@ function switchProfile(id){
  $('sources').textContent='Še ni iskanja.';
  $('receiptForm').reset();
  $('receiptReview').hidden=true;
+ $('receiptSaveStatus').textContent='';
  $('receiptRows').replaceChildren();
  $('receiptStatus').textContent='Po branju preglej postavke in potrdi shranjevanje.';
  $('manualPriceForm').reset();
