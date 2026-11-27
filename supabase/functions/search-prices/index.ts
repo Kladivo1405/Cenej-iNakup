@@ -186,22 +186,41 @@ function applyBasketEligibility(offer:any,query:string,description=""){
   offer.eligible_for_basket=Boolean(requested&&sameQuantity(requested,parseQuantity(offer.unit))&&offer.price_status==="current"&&queryMatches(query,offer.name,description,offer.unit??"",offer.brand??""));
   return offer;
 }
-async function searchTus(q:string){
- const term=discoveryTerms(q)[0];
- if(!term)return [];
- const url=`https://www.tus.si/wp-json/wc/store/products?search=${encodeURIComponent(term)}&per_page=50`;
- const r=await fetchPublic(url);
- if(!r.ok)throw new Error(`Tuš HTTP ${r.status}`);
- const products=await r.json();
+const TUS_PRODUCT_URL=/^https:\/\/www\.tus\.si\/izdelki\/[a-z0-9-]+\/$/;
+async function tusStoreLinks(terms:string[]){
+ const url=SOURCES.tus.base+"/trgovina/?"+new URLSearchParams({s:terms.join(" "),post_type:"product"});
+ const response=await fetchPublic(url);
+ if(!response.ok)throw new Error("Tuševa trgovina HTTP "+response.status);
+ const html=await response.text();
+ return [...new Set([...html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["']/gi)]
+   .map(match=>decodeHtml(match[1])).filter(link=>TUS_PRODUCT_URL.test(link)))];
+}
+async function tusApiLinks(q:string,term:string){
+ const url=SOURCES.tus.base+SOURCES.tus.endpoint+"?"+new URLSearchParams({search:term,per_page:"50"});
+ const response=await fetchPublic(url);
+ if(!response.ok)throw new Error("Tuš katalog HTTP "+response.status);
+ const products=await response.json();
  if(!Array.isArray(products))throw new Error("Tuš: neprepoznan odgovor kataloga");
- const candidates=products.filter(p=>{
-   if(typeof p.name!=="string"||!/^https:\/\/www\.tus\.si\/izdelki\/[a-z0-9-]+\/$/.test(p.permalink))return false;
+ const quantity=parseQuantity(q);
+ return products.filter(p=>{
+   if(typeof p.name!=="string"||!TUS_PRODUCT_URL.test(p.permalink))return false;
    const description=plainText(p.description??p.short_description??"");
-   const quantity=parseQuantity(q);
    return (!quantity||sameQuantity(quantity,packageQuantity(p.name)))&&
      (productType(q)==="milk"?productType(p.name)==="milk":queryMatches(q,decodeHtml(p.name),description,"",brandName(p.brands)??""));
- });
- return await searchProductPages("Tuš",candidates.map(p=>p.permalink),(html,url)=>{
+ }).map(p=>p.permalink as string);
+}
+async function searchTus(q:string){
+ const terms=discoveryTerms(q);
+ if(!terms.length)return [];
+ const [store,api]=await Promise.allSettled([tusStoreLinks(terms),tusApiLinks(q,terms[0])]);
+ if(store.status==="rejected"&&api.status==="rejected")throw store.reason;
+ const urls=new Set(api.status==="fulfilled"?api.value:[]);
+ if(store.status==="fulfilled"){
+   const ranked=store.value.map(url=>({url,rank:candidateRank(new URL(url).pathname.replace(/\/$/,""),q,terms)}))
+     .filter(item=>item.rank>0).sort((a,b)=>b.rank-a.rank);
+   for(const {url} of ranked.slice(0,12))urls.add(url);
+ }
+ return await searchProductPages("Tuš",[...urls],(html,url)=>{
    const product=structuredProducts(html)[0];
    if(typeof product?.name!=="string")return null;
    const ingredientsTab=html.match(/<li\s+data-id="(\d+)"\s+class="[^"]*\bingredients\b[^"]*"/i)?.[1];
