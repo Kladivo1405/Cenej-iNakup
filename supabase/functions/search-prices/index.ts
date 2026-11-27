@@ -1,3 +1,5 @@
+import {getDocumentProxy,getResolvedPDFJS} from "npm:unpdf@1.4.0";
+
 // CenejsiNakup Edge Function - quality-first adapter version
 // Only public retailer pages/endpoints; robots.txt is checked before every fetch.
 
@@ -51,7 +53,7 @@ function robotsDecision(txt:string, path:string, token=ROBOT_TOKEN):{allowed:boo
   return {allowed:winner.allow,reason:`${winner.allow?"Allow":"Disallow"}: ${winner.pattern}`};
 }
 const robotsCache=new Map<string,{text:string;until:number}>();
-async function fetchPublic(url:string):Promise<Response>{
+async function fetchPublic(url:string,extraHeaders:Record<string,string>={}):Promise<Response>{
   const u=new URL(url);
   if(u.protocol!=="https:")throw new Error("dovoljen je samo HTTPS");
   let cached=robotsCache.get(u.origin);
@@ -64,7 +66,7 @@ async function fetchPublic(url:string):Promise<Response>{
   }
   const decision=robotsDecision(cached.text,u.pathname+(u.search||""));
   if(!decision.allowed)throw new Error(`robots.txt blokira ${u.pathname}: ${decision.reason}`);
-  return await fetch(url,{headers:{"User-Agent":UA,"Accept":"application/json,text/html,application/xml,text/xml,*/*"},signal:AbortSignal.timeout(18000),redirect:"error"});
+  return await fetch(url,{headers:{"User-Agent":UA,"Accept":"application/json,text/html,application/xml,text/xml,*/*",...extraHeaders},signal:AbortSignal.timeout(18000),redirect:"error"});
 }
 function brandName(v:any):string|null { if(!v)return null;if(typeof v==="string")return v;if(Array.isArray(v))return brandName(v[0]);return typeof v.name==="string"?v.name:null; }
 function parseQuantity(text:string):{amount:number;unit:"l"|"kg"|"kos";label:string;count:number;each:number}|null {
@@ -88,8 +90,28 @@ function productType(text:string):string|null {
  const n=norm(text);
  if(/\b(cokoladno|kakav|cocoa|chocolate|napitek|drink)\b/.test(n)&&/\bmlek/.test(n))return "chocolate-milk";
  if(/\b(mleko|milk|milch)\b/.test(n))return "milk";
- if(/\b(maslo|butter)\b/.test(n))return "butter";
+ if(/\bmaslen\w* namaz\b|\bnamaz\b.*\bmasl\w*\b/.test(n))return "butter-spread";
+ if(/\b(maslo|butter)\b/.test(n)){
+   if(/\b(arasid\w*|mandljev\w*|kakavov\w*|lesnikov\w*|sezamov\w*)\b/.test(n))return "nut-butter";
+   return "butter";
+ }
+ if(/\bpoli\b/.test(n)&&/\b(narez\w*|salam\w*|rezinah|pecenica)\b/.test(n))return "poli";
+ if(/\b(pivo|beer|bier)\b/.test(n))return "beer";
+ if(/\bpraln\w*\b.*\b(prasek|prah|gel|tekoc\w*|kapsul\w*|detergent)\b|\b(prasek|gel|tekoc\w*|kapsul\w*)\b.*\bza pranje\b/.test(n))return "laundry";
  if(/\b(jajca|jajce|eggs)\b/.test(n))return "eggs";
+ return null;
+}
+function poliForm(text:string){
+ const n=norm(text);
+ if(/\b(narez\w*|rezine|rezinah|narezana)\b/.test(n))return "sliced";
+ if(/\b(salam\w*|kosu)\b/.test(n))return "whole";
+ return null;
+}
+function detergentForm(text:string){
+ const n=norm(text);
+ if(/\b(prasek|prah)\b/.test(n))return "powder";
+ if(/\b(gel|tekoc\w*)\b/.test(n))return "liquid";
+ if(/\b(kapsul\w*|pods)\b/.test(n))return "capsules";
  return null;
 }
 function attributes(text:string){const n=norm(text);return {
@@ -145,6 +167,8 @@ function queryMatches(q:string,name:string,description="",weight="",brand=""):bo
  if(/^parmezan(?:\s+\d.*)?$/.test(requestedWords)&&/\b(?:namaz|salama|omaka|juha|prigrizek)\b/.test(title))return false;
  if(/mleko za telo|losjon|lotion|milo|lonec|robcki|kopel|sampon|balzam|krema|kozmet/.test(title))return false;
  const qt=productType(q),nt=productType(name);if(qt&&nt!==qt)return false;
+ if(qt==="poli"&&poliForm(q)&&poliForm(name)!==poliForm(q))return false;
+ if(qt==="laundry"&&detergentForm(q)&&detergentForm(name)!==detergentForm(q))return false;
  if(qt==="eggs"&&((eggSize(q)&&eggSize(name)!==eggSize(q))||(rearing(q)&&rearing(combined)!==rearing(q))))return false;
  if(/\bplenice\b/.test(norm(q))&&diaperSize(q)&&diaperSize(name)!==diaperSize(q))return false;
  if(qt==="milk"){
@@ -160,26 +184,59 @@ function queryMatches(q:string,name:string,description="",weight="",brand=""):bo
  const requested=parseQuantity(q);
  const actual=packageQuantity(name,weight,description);
  if(requested&&!sameQuantity(requested,actual))return false;
- if(!qt||qt==="eggs"){
+ if(!qt||["eggs","poli","beer","laundry","butter","butter-spread","nut-butter"].includes(qt)){
    const terms=/\bplenice\b/.test(norm(q))&&diaperSize(q)?q.replace(/\b(?:velikost|vel|size|maxi|junior|midi|s)\s*\d{1,2}\b|\bs\d{1,2}\b/gi," "):q;
-   const meaningful=greek?greekYogurtTerms(terms):searchWords(terms);
+   const categoryWords:Record<string,RegExp>={
+     poli:/^(poli|narez\w*|salam\w*|rezin\w*|kosu)$/,
+     beer:/^(pivo|beer|bier)$/,
+     laundry:/^(praln\w*|pranje|prasek|prah|gel|tekoc\w*|kapsul\w*|detergent)$/,
+     butter:/^(maslo|butter)$/,
+     "butter-spread":/^(maslen\w*|namaz|maslo)$/,
+   };
+   const meaningful=(greek?greekYogurtTerms(terms):searchWords(terms))
+     .filter(word=>!categoryWords[qt??""]?.test(word));
    const words=new Set(norm(name+" "+brand).split(" "));
-   if((!greek&&!meaningful.length)||!meaningful.every(word=>words.has(word)))return false;
+   if((!qt&&!greek&&!meaningful.length)||!meaningful.every(word=>words.has(word)))return false;
  }
  return true;
 }
 function validity(validUntil:any):{status:"current"|"expired"|"unverified";date:string|null} {
   if(!validUntil)return {status:"unverified",date:null};
   const d=new Date(validUntil);if(Number.isNaN(d.getTime()))return {status:"unverified",date:null};
-  const end=new Date(d);end.setHours(23,59,59,999);
-  return {status:end.getTime()>=Date.now()?"current":"expired",date:d.toISOString().slice(0,10)};
+  const date=typeof validUntil==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(validUntil)?validUntil:slovenianDay.format(d);
+  return {status:date>=slovenianDay.format(new Date())?"current":"expired",date};
+}
+function imageUrl(image:any,base:string):string|null {
+  const value=Array.isArray(image)?image[0]:image;
+  const raw=typeof value==="string"?value:value?.contentUrl??value?.url??value?.src;
+  if(typeof raw!=="string")return null;
+  try{
+    const url=new URL(decodeHtml(raw),base);
+    const hosts=["www.lidl.si","imgproxy-retcat.assets.schwarz","www.hofer.si","s7g10.scene7.com","www.spar.si","online.spar.si","cdn.interspar.at","cdn1.interspar.at","www.tus.si","www.mercator.si","trgovina.mercator.si","mercatoronline.si","www.eurospin.si"];
+    return url.protocol==="https:"&&hosts.includes(url.hostname)&&!url.username&&!url.password&&!url.port?url.href:null;
+  }catch{return null;}
+}
+function pageImage(html:string){
+  for(const tag of html.matchAll(/<meta\b[^>]+>/gi)){
+    if(/\bproperty=["']og:image["']/i.test(tag[0]))return tag[0].match(/\bcontent=["']([^"']+)["']/i)?.[1]??null;
+  }
+  return null;
 }
 function makeOffer(input:any){
   const price=Number(input.price);if(!Number.isFinite(price)||price<=0)return null;
   const name=decodeHtml(input.name??"Neimenovan izdelek").replace(/\s+/g," ").trim();
   const quantity=packageQuantity(name,input.weight,input.description);
   const valid=validity(input.priceValidUntil);
-  return {store:input.store,name,brand:brandName(input.brand),price,unit:quantity?.label??null,unit_price:quantity?price/quantity.amount:null,unit_measure:quantity?.unit??null,price_valid_until:valid.date,price_status:valid.status,coupon_condition:input.couponCondition as string|undefined,eligible_for_basket:false,url:input.url??null,source:input.source??null,checked_at:new Date().toISOString()};
+  const washCount=norm(name+" "+(input.weight??"")).match(/\b(\d{1,3})\s*(?:pranj\w*|pralnih ciklov|wash\w*)\b/)?.[1];
+  const regular=Number(input.regularPrice);
+  const promotion=Boolean(input.promotion&&valid.status==="current");
+  return {store:input.store,name,brand:brandName(input.brand)??(productType(name)==="poli"?"Poli":null),price,
+    unit:quantity?.label??null,unit_price:quantity?price/quantity.amount:null,unit_measure:quantity?.unit??null,
+    wash_count:washCount?Number(washCount):null,image_url:imageUrl(input.image,input.url),
+    regular_price:Number.isFinite(regular)&&regular>price?regular:null,promotion,
+    minimum_quantity:promotion&&Number.isSafeInteger(input.minimumQuantity)&&input.minimumQuantity>1?input.minimumQuantity:null,
+    price_valid_until:valid.date,price_status:valid.status,coupon_condition:input.couponCondition as string|undefined,
+    eligible_for_basket:false,url:input.url??null,source:input.source??null,checked_at:new Date().toISOString()};
 }
 function applyBasketEligibility(offer:any,query:string,description=""){
   const requested=parseQuantity(query);
@@ -209,6 +266,25 @@ async function tusApiLinks(q:string,term:string){
      (productType(q)==="milk"?productType(p.name)==="milk":queryMatches(q,decodeHtml(p.name),description,"",brandName(p.brands)??""));
  }).map(p=>p.permalink as string);
 }
+function tusProductPricing(html:string,price:number|null){
+  const current=html.match(/<p class="price-discounted"[^>]*>([\s\S]*?)<\/p>/i)?.[1]??"";
+  const display=plainText(current);
+  const promoPrice=Number(display.match(/(\d+,\d{2})\s*€/i)?.[1]?.replace(",","."));
+  const datesText=plainText(html.match(/Veljavnost akcije:\s*<\/b>([^<]+)/i)?.[1]??"");
+  const dates=printedCouponDates(datesText);
+  const today=slovenianDay.format(new Date());
+  const starts=dates[0],ends=dates[1]??dates[0];
+  const multi=norm(display).match(/(?:ob nakupu )?(\d+|dva|tri|stiri) (?:ali vec|kos\w*)/);
+  const min=multi?({dva:2,tri:3,stiri:4}[multi[1]]??Number(multi[1])):null;
+  const unsupported=/m10-activate|cartShoppingList/i.test(html)||
+    /\bkupon\b|\bgratis\b|1\s*\+\s*1/i.test(display)||
+    (/ob nakupu|ali vec/i.test(display)&&!min);
+  if(unsupported||price===null||!(promoPrice>0&&promoPrice<price)||!starts||starts>today||ends<today){
+    return {price,regularPrice:price};
+  }
+  return {price:promoPrice,regularPrice:price,priceValidUntil:ends,promotion:true,minimumQuantity:min};
+}
+
 async function searchTus(q:string){
  const terms=discoveryTerms(q);
  if(!terms.length)return [];
@@ -245,7 +321,9 @@ async function searchTus(q:string){
    const price=regular?Number(regular.replace(",",".")):
      /price-discounted|Veljavnost akcije:/i.test(html)?null:
      offer?.priceCurrency==="EUR"?offer.price:null;
-   const result=makeOffer({store:"Tuš",name,description,brand,price,url,source:url});
+   const regularPrice=typeof price==="number"?price:Number(price)||null;
+   const result=makeOffer({store:"Tuš",name,description,brand,...tusProductPricing(html,regularPrice),
+     image:product.image??html.match(/<img class="rsTmb" src="(https:\/\/www\.tus\.si\/app\/images\/[^"]+)"/i)?.[1],url,source:url});
    if(!result||!/\bbaterij\w*\b/.test(norm(name)))return result;
    const text=norm(name+" "+description);
    const aa=/\b(?:aa|lr6|hr6|r6)\b/.test(text);
@@ -268,18 +346,20 @@ async function searchEurospin(q:string){
    const range=plainText(card.match(/<div class="date_current_promo"[^>]*>([^<]*)<\/div>/i)?.[1]??"");
    const price=plainText(card.match(/<i itemprop="price"[^>]*>([^<]*)<\/i>/i)?.[1]??"").match(/^(\d+,\d{2})\s*€$/)?.[1];
    if(!name||!price||!activeEurospinRange(range)||!queryMatches(q,name,"",weight,brand))continue;
-   const offer=makeOffer({store:"Eurospin",name,brand,weight,price:Number(price.replace(",",".")),url,source:url});
+   const offer=makeOffer({store:"Eurospin",name,brand,weight,price:Number(price.replace(",",".")),
+     priceValidUntil:activeEurospinRange(range),promotion:true,image:card.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1],url,source:url});
    if(offer)result.push(offer);
  }
  return result.slice(0,20);
 }
 function activeEurospinRange(text:string,now=new Date()){
  const range=text.match(/^(\d{1,2})\.(\d{1,2})\.?\s*[-–]\s*(\d{1,2})\.(\d{1,2})\.?$/);
- if(!range)return false;
- const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Ljubljana",month:"numeric",day:"numeric"}).formatToParts(now);
- const today=Number(parts.find(p=>p.type==="month")?.value)*100+Number(parts.find(p=>p.type==="day")?.value);
+ if(!range)return null;
+ const [year,month,day]=slovenianDay.format(now).split("-").map(Number);
+ const today=month*100+day;
  const start=Number(range[2])*100+Number(range[1]),end=Number(range[4])*100+Number(range[3]);
- return start<=end?today>=start&&today<=end:today>=start||today<=end;
+ const active=start<=end?today>=start&&today<=end:today>=start||today<=end;
+ return active?new Date(Date.UTC(year+(start>end&&today>=start?1:0),Number(range[4])-1,Number(range[3]))).toISOString().slice(0,10):null;
 }
 
 function collectProducts(obj:any):any[]{if(!obj||typeof obj!=="object")return[];const found:any[]=[];if(obj["@type"]==="Product"||(Array.isArray(obj["@type"])&&obj["@type"].includes("Product")))found.push(obj);if(Array.isArray(obj))for(const x of obj)found.push(...collectProducts(x));else for(const v of Object.values(obj))if(v&&typeof v==="object")found.push(...collectProducts(v));return found;}
@@ -368,7 +448,9 @@ function lidlGridOffers(html:string,url:string,q?:string,upcoming=false,now=Date
     if(q&&!queryMatches(q,name,details,weight,brand??""))continue;
     if(requested&&!sameQuantity(requested,quantity))continue;
     if(p.multipack===true&&(!quantity||quantity.count===1))continue;
-    const offer=makeOffer({store:"Lidl",name,brand,weight,price:p.price.price,url:"https://www.lidl.si"+path,source:url});
+    const offer=makeOffer({store:"Lidl",name,brand,weight,price:p.price.price,
+      regularPrice:p.price.oldPrice?.price??p.price.oldPrice,priceValidUntil:!upcoming&&ends?new Date(ends).toISOString():null,
+      promotion:Boolean(p.price.oldPrice),image:p.imageList_V2?.[0]?.variants?.find((v:any)=>v.ratio==="4:3")?.sizes?.mediumUrl??p.image??p.imageList?.[0],url:"https://www.lidl.si"+path,source:url});
     if(offer)offers.set(path,upcoming&&starts!==null&&ends!==null?{
       ...offer,available_from:new Date(starts).toISOString(),available_until:new Date(ends).toISOString()
     }:offer);
@@ -458,7 +540,7 @@ async function searchCatalogDetails(store:"Lidl"|"Hofer",q:string){
     if(offer&&validity(offer.priceValidUntil).status==="expired")return null;
     const regular=store==="Hofer"?html.match(/<span class="base-price__regular">\s*<span>\s*(\d+,\d{2})(?:\s|&nbsp;)*(?:€|&euro;)\s*<\/span>/i)?.[1]:null;
     const price=regular?Number(regular.replace(",",".")):offer?.price;
-    return makeOffer({store,name,description,weight,brand,price,url,source:url});
+    return makeOffer({store,name,description,weight,brand,price,image:p.image??pageImage(html),url,source:url});
   });
 }
 async function readHoferCategory(url:string){
@@ -476,7 +558,7 @@ function hoferGridOffers(html:string,source:string,q:string){
     const weight=plainText(body.match(/class="product-tile__unit-of-measurement"[^>]*><p>([^<]*)/i)?.[1]??"");
     const price=body.match(/<span class="base-price__regular">\s*<span>\s*(\d+,\d{2})(?:\s|&nbsp;)*(?:€|&euro;)\s*<\/span>/i)?.[1];
     if(!name||!price||!queryMatches(q,name,"",weight,brand))continue;
-    const offer=makeOffer({store:"Hofer",name,brand,weight,price:Number(price.replace(",",".")),url:"https://www.hofer.si"+card[1],source});
+    const offer=makeOffer({store:"Hofer",name,brand,weight,price:Number(price.replace(",",".")),image:body.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1],url:"https://www.hofer.si"+card[1],source});
     if(offer)out.push(offer);
   }
   return out;
@@ -552,7 +634,7 @@ function sparDetail(html:string,url:string,q:string){
   const processing=decodeHtml(description.match(/Prehrambni tip artikla<\/h3>\s*<p>([^<]*)<\/p>/i)?.[1]??"");
   if(!queryMatches(q,name,processing,weight,brandName(p.brand)??""))return null;
   // Repeated requests showed priceValidUntil advancing with the request time.
-  return makeOffer({store:"Spar",name,description:processing,weight,brand:p.brand,price,url,source:url});
+  return makeOffer({store:"Spar",name,description:processing,weight,brand:p.brand,price,image:p.image??pageImage(html),url,source:url});
 }
 function mercatorDetail(html:string,url:string,q:string){
   const title=html.match(/<h1 class="lib-analytics-product-name">([^<]*)<\/h1>/i)?.[1];
@@ -562,13 +644,18 @@ function mercatorDetail(html:string,url:string,q:string){
   if(!title||!price||!html.includes('data-analytics-label="AddToCartProductPage"'))return null;
   const name=decodeHtml(title).trim();
   if(!queryMatches(q,name))return null;
-  return makeOffer({store:"Mercator",name,price:price.replace(",","."),url,source:url});
+  const product=structuredProducts(html)[0];
+ return makeOffer({store:"Mercator",name,brand:product?.brand,price:price.replace(",","."),image:product?.image??pageImage(html),url,source:url});
 }
 function discoveryTerms(q:string){
   const kind=productType(q);
   if(greekYogurt(q))return ["jogurt"];
   if(kind==="milk")return ["mleko"];
-  if(kind==="butter")return ["maslo"];
+  if(kind==="butter")return searchWords(q).length>1?searchWords(q):["maslo"];
+  if(kind==="butter-spread")return ["masleni","namaz"];
+  if(kind==="poli")return ["poli"];
+  if(kind==="beer")return searchWords(q);
+  if(kind==="laundry")return searchWords(q).filter(word=>!["za","pranje","detergent"].includes(word));
   if(kind==="eggs")return ["jajca"];
   return searchWords(q);
 }
@@ -653,6 +740,22 @@ function substitutionFor(query:string):{query:string;reason:string;rank:(offer:a
  return null;
 }
 
+function typeSubstitution(query:string){
+ const kind=productType(query);
+ if(kind==="poli"&&poliForm(query))return {
+   query:"Poli",reason:poliForm(query)==="sliced"?"V kosu":"Narezano",
+   rank:(offer:any)=>productType(offer.name)==="poli"&&poliForm(offer.name)&&poliForm(offer.name)!==poliForm(query)?0.25:Infinity
+ };
+ if(kind==="butter"||kind==="butter-spread")return {
+   query:kind==="butter"?"Masleni namaz":"Maslo",reason:"Druga vrsta izdelka",
+   rank:(offer:any)=>productType(offer.name)===(kind==="butter"?"butter-spread":"butter")?0.45:Infinity
+ };
+ if(kind==="laundry"&&detergentForm(query))return {
+   query:"pralni detergent "+searchWords(query).filter(word=>!["pralni","prasek","prah","gel","tekoci","kapsule","pranje"].includes(word)).join(" "),reason:"Druga oblika detergenta",
+   rank:(offer:any)=>productType(offer.name)==="laundry"&&detergentForm(offer.name)&&detergentForm(offer.name)!==detergentForm(query)?0.45:Infinity
+ };
+ return null;
+}
 function packageSubstitution(query:string){
  const target=parseQuantity(query);
  if(!target)return null;
@@ -674,11 +777,202 @@ function batterySubstitution(query:string){
    ["mixed","unknown"].includes(offer.battery_variant)?0.4:Infinity};
 }
 
+const slovenianDay=new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Ljubljana",year:"numeric",month:"2-digit",day:"2-digit"});
+const couponSources={
+  Spar:"https://www.spar.si/promocije-in-projekti/aktualne-promocije",
+  Mercator:"https://www.mercator.si/akcije-in-ugodnosti/novo-ta-vikend-dobite-vec/",
+  "Tuš":"https://www.tus.si/katalog/",
+};
+type CouponStore=keyof typeof couponSources;
+type Coupon={id:string;dates:string[];kind:"item"|"basket"|"credit";rate:number;minimum:number;maximumRate?:number;eligibility?:string;source:string};
+
+function printedCouponDates(text:string):string[]{
+  const matches=[...text.matchAll(/\b(\d{1,2})\s*\.\s*(\d{1,2})\s*\.(?:\s*(20\d{2}))?/g)];
+  const lastYear=matches.findLast(match=>match[3])?.[3];
+  if(!lastYear||matches.length>7)return [];
+  const checked=matches.flatMap((match,index)=>{
+    const next=matches.slice(index).find(date=>date[3]);
+    const month=Number(match[2]),day=Number(match[1]);
+    const year=Number(match[3]??next?.[3]??lastYear)-(!match[3]&&next&&month>Number(next[2])+6?1:0);
+    const date=new Date(Date.UTC(year,month-1,day));
+    return date.getUTCMonth()===month-1&&date.getUTCDate()===day?[date.toISOString().slice(0,10)]:[];
+  });
+  return [...new Set(checked)].sort();
+}
+function readSparCoupons(html:string):Coupon[]{
+  const coupons:Coupon[]=[];
+  for(const match of html.matchAll(/<p\b[^>]*class="[^"]*contentslider25-card__title[^"]*"[^>]*>([\s\S]*?)<\/p>([\s\S]{0,700}?)href="(\/promocije-in-projekti\/tisk-kuponov\/kupon-(10|25))"/gi)){
+    const dates=printedCouponDates(plainText(match[1]));
+    const item=match[4]==="25";
+    if(!dates.length)continue;
+    // The adjacent image alternative text identifies both the offer and its minimum spend.
+    const tile=html.slice(Math.max(0,(match.index??0)-9000),match.index);
+    const alt=[...tile.matchAll(/\balt="([^"]+)"[^>]*>/gi)].at(-1)?.[1]??"";
+    if(item?!/25\s*%.*en izdelek/i.test(alt):!/10\s*%.*celoten nakup.*nad\s*30/i.test(alt))continue;
+    coupons.push({id:item?"spar-item":"spar-basket",dates,kind:item?"item":"basket",rate:item?0.25:0.10,
+      minimum:item?0:30,source:new URL(match[3],couponSources.Spar).href});
+  }
+  if(!coupons.length)throw new Error("SPAR: objave kuponov ni bilo mogoče potrditi");
+  return coupons;
+}
+function readMercatorCoupons(html:string):Coupon[]{
+  const text=plainText(html).replace(/\s+\./g,".");
+  const offer=text.match(/Ta konec tedna,?\s+(.{0,180}?)\s*,?\s*lahko izberete svoj popust\s*:\s*(.{0,550}?)(?:Ta vikend pa|Koda za|Nazaj na)/i);
+  if(!offer)throw new Error("Mercator: vikend ponudbe ni bilo mogoče potrditi");
+  const dates=printedCouponDates(offer[1]);
+  const coupons:Coupon[]=[];
+  if(dates.length&&/25\s*%.*preostalega dela košarice.*nad\s*5\s*€/i.test(offer[2])){
+    coupons.push({id:"mercator-item",dates,kind:"item",rate:0.25,minimum:5,source:couponSources.Mercator});
+  }
+  if(dates.length&&/10\s*%.*celoten nakup.*nad\s*30\s*€.*izdelke v akciji/i.test(offer[2])){
+    coupons.push({id:"mercator-basket",dates,kind:"basket",rate:0.10,minimum:30,source:couponSources.Mercator});
+  }
+  if(!coupons.length)throw new Error("Mercator: pogojev kuponov ni bilo mogoče potrditi");
+  return coupons;
+}
+
+type CouponPageText={str:string;x:number;y:number;width:number};
+function readTusCouponPage(text:CouponPageText[],source:string):Coupon[]{
+  const found=new Map<string,Coupon>();
+  for(const line of text){
+    const words=norm(line.str);
+    const credit=words.includes("nakupa vam vrnemo");
+    if(!credit&&!words.includes("za izdelek po vasi izbiri"))continue;
+    const nearby=text.filter(part=>
+      Math.abs(part.x+part.width/2-line.x-line.width/2)<76&&part.y>=line.y-16&&part.y<=line.y+108
+    ).sort((a,b)=>Math.round(b.y)-Math.round(a.y)||a.x-b.x);
+    const label=[...new Set(nearby.map(part=>part.str))].join(" ");
+    if(credit?(!/10\s*[-–]\s*99\s*%/.test(label)||!(/nad\s*30\s*€/.test(label))):!(/\b25\s*%/.test(label)))continue;
+    const dates=printedCouponDates(nearby.filter(part=>part.y>line.y+20).map(part=>part.str).join(" "));
+    if(!dates.length)continue;
+    const id=credit?"tus-credit":"tus-item";
+    const merged=[...new Set([...(found.get(id)?.dates??[]),...dates])].sort();
+    found.set(id,{id,dates:merged,kind:credit?"credit":"item",rate:credit?0.10:0.25,minimum:credit?30:0,
+      ...(credit?{maximumRate:0.99,eligibility:"regular"}:{}),source});
+  }
+  return [...found.values()];
+}
+async function tusPdf(url:string){
+  const limit=30*1024*1024,chunkSize=256*1024;
+  const response=await fetchPublic(url,{Range:"bytes=0-"+(chunkSize-1)});
+  if(!response.ok)throw new Error("Tuš: katalog ni dosegljiv");
+  if(response.status===200){
+    const length=Number(response.headers.get("content-length"));
+    if(length>limit)throw new Error("Tuš: katalog je prevelik");
+    if(length>0)return await getDocumentProxy(new Uint8Array(await response.arrayBuffer()));
+    const reader=response.body?.getReader();
+    if(!reader)throw new Error("Tuš: katalog je prazen");
+    const chunks:Uint8Array[]=[];
+    let size=0;
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      size+=value.length;
+      if(size>limit){await reader.cancel();throw new Error("Tuš: katalog je prevelik");}
+      chunks.push(value);
+    }
+    const pdf=new Uint8Array(size);
+    let offset=0;
+    for(const chunk of chunks){pdf.set(chunk,offset);offset+=chunk.length;}
+    chunks.length=0;
+    return await getDocumentProxy(pdf);
+  }
+  const total=Number(response.headers.get("content-range")?.match(/^bytes 0-\d+\/(\d+)$/)?.[1]);
+  if(response.status!==206||!(total>0&&total<=limit))throw new Error("Tuš: velikost kataloga ni znana");
+  const {PDFDataRangeTransport}=await getResolvedPDFJS();
+  const initial=new Uint8Array(await response.arrayBuffer());
+  const transport=new PDFDataRangeTransport(total,initial);
+  let rejectRange:(reason:unknown)=>void;
+  const rangeFailure=new Promise<never>((_,reject)=>{rejectRange=reject});
+  transport.requestDataRange=(start,end)=>{
+    void (async()=>{
+      const part=await fetchPublic(url,{Range:"bytes="+start+"-"+(end-1)});
+      const expected="bytes "+start+"-"+(end-1)+"/"+total;
+      if(part.status!==206||part.headers.get("content-range")!==expected){
+        await part.body?.cancel();
+        throw new Error("Tuš: del kataloga ni dosegljiv");
+      }
+      const bytes=new Uint8Array(await part.arrayBuffer());
+      if(bytes.length!==end-start)throw new Error("Tuš: nepopoln prenos kataloga");
+      transport.onDataRange(start,bytes);
+    })().catch(rejectRange);
+  };
+  const {getDocument}=await getResolvedPDFJS();
+  const task=getDocument({range:transport,rangeChunkSize:chunkSize,disableAutoFetch:true,disableStream:true,isEvalSupported:false});
+  return {task,rangeFailure};
+}
+
+async function readTusCoupons(html:string):Promise<Coupon[]>{
+  const links=[...new Set([...html.matchAll(/https:\/\/www\.tus\.si\/app\/uploads\/catalogues\/[a-z0-9_.-]+\.pdf/gi)].map(match=>match[0]))];
+  const today=slovenianDay.format(new Date());
+  const editions=[...html.matchAll(/<a href="(https:\/\/www\.tus\.si\/app\/uploads\/catalogues\/[a-z0-9_.-]+\.pdf)"[^>]*>[^<]*<\/a>([\s\S]{0,400}?)<\/li>/gi)]
+    .flatMap(match=>{
+      if(!/AKCIJSKI KATALOG/i.test(match[2]))return [];
+      const dates=[...match[2].matchAll(/<time datetime="(\d{4}-\d{2}-\d{2})">/g)].map(date=>date[1]);
+      return dates.length===2&&today<=dates[1]?[{url:match[1],from:dates[0]}]:[];
+    })
+    .sort((a,b)=>Number(b.from<=today)-Number(a.from<=today)||b.from.localeCompare(a.from));
+  const url=editions[0]?.url??links.filter(link=>/_akcij(?:a_|ski_letak_)/i.test(link)).at(-1);
+  if(!url)throw new Error("Tuš: akcijskega kataloga ni bilo mogoče potrditi");
+  const document=await tusPdf(url);
+  const bracket=<T>(operation:Promise<T>)=>"task" in document?Promise.race([operation,document.rangeFailure]):operation;
+  try{
+    const pdf="task" in document?await bracket(document.task.promise):document;
+    const coupons=new Map<string,Coupon>();
+    for(const number of [...new Set([pdf.numPages,Math.max(1,pdf.numPages-1),1,Math.min(2,pdf.numPages)])]){
+      const page=await bracket(pdf.getPage(number));
+      const data=await bracket(page.getTextContent());
+      const items=data.items.flatMap(item=>"str" in item&&item.str.trim()?[{
+        str:item.str.trim(),x:item.transform[4],y:item.transform[5],width:item.width
+      }]:[]);
+      for(const coupon of readTusCouponPage(items,url+"#page="+number)){
+        const old=coupons.get(coupon.id);
+        coupons.set(coupon.id,old?{...old,dates:[...new Set([...old.dates,...coupon.dates])].sort()}:coupon);
+      }
+      if(coupons.size>=2)break;
+    }
+    if(!coupons.size)throw new Error("Tuš: datumi kuponov v katalogu niso prepoznavni");
+    return [...coupons.values()];
+  }finally{
+    if("task" in document)await document.task.destroy();
+    else await document.destroy();
+  }
+}
+const couponCache=new Map<CouponStore,{until:number;promise:Promise<Coupon[]>}>();
+async function confirmedCoupons(store:CouponStore){
+  const cached=couponCache.get(store);
+  if(cached&&cached.until>Date.now())return await cached.promise;
+  const promise=(async()=>{
+    const response=await fetchPublic(couponSources[store]);
+    if(!response.ok)throw new Error("Vir kuponov ni dosegljiv");
+    const html=await response.text();
+    if(store==="Spar")return readSparCoupons(html);
+    if(store==="Mercator")return readMercatorCoupons(html);
+    return await readTusCoupons(html);
+  })();
+  couponCache.set(store,{until:Date.now()+60*60*1000,promise});
+  try{return await promise;}
+  catch(error){
+    couponCache.set(store,{until:Date.now()+5*60*1000,promise});
+    throw error;
+  }
+}
+async function couponResponse(){
+  const entries=Object.keys(couponSources) as CouponStore[];
+  const results=await Promise.allSettled(entries.map(confirmedCoupons));
+  const stores=Object.fromEntries(entries.map((store,index)=>{
+    const result=results[index];
+    return [store,result.status==="fulfilled"?{available:true,coupons:result.value}:{available:false,coupons:[]}];
+  }));
+  return new Response(JSON.stringify({stores,checked_at:new Date().toISOString()}),{headers:{...jsonHeaders,"Cache-Control":"no-store"}});
+}
+
 async function handleSearch(req:Request){
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors});
  try{
   if(req.method!=="POST")return new Response(JSON.stringify({error:"POST required"}),{status:405,headers:jsonHeaders});
   const body=await req.json();
+  if(body.action==="coupons")return await couponResponse();
   const input=String(body.query||"").trim();
   if(input.length<2||input.length>100)throw new Error("Vnesi iskalni niz med 2 in 100 znaki.");
   const q=/\bjajca\b/i.test(input)&&!parseQuantity(input)&&/\s[1-9]\d{0,2}$/.test(input)?input+" kos":input;
@@ -699,11 +993,11 @@ async function handleSearch(req:Request){
             ?[{offer,rank,reason:rule.reason}]:[];
         });
       };
-      const similarSearch=Promise.allSettled([packaging,store==="Tuš"?battery:null]
+      const similarSearch=Promise.allSettled([packaging,typeSubstitution(q),store==="Tuš"?battery:null]
         .filter(rule=>rule!==null).map(findAlternatives));
       const [current]=await Promise.allSettled([search(q)]);
       const rows=current.status==="fulfilled"?current.value.filter(row=>row.price_status!=="expired"):[];
-      offers.push(...rows);
+      offers.push(...rows.map(row=>applyBasketEligibility(row,q)));
       sources[store]=current.status==="fulfilled"?rows.length+" ustreznih ponudb":"ni podatka: "+String(current.reason).slice(0,150);
       const exact=rows.filter(row=>!row.coupon_condition);
       const [internal,other]=await Promise.all([
@@ -711,11 +1005,13 @@ async function handleSearch(req:Request){
         Promise.allSettled(!exact.length&&substitute?[findAlternatives(substitute)]:[]),
       ]);
       const alternativesById=new Map<string,any>();
-      const exactIds=new Set(exact.map(offer=>offer.url));
+      const identity=(offer:any)=>offer.url+"|"+norm(offer.name)+"|"+(offer.unit??"");
+      const exactIds=new Set(exact.map(identity));
       for(const result of [...internal,...other])if(result.status==="fulfilled")for(const entry of result.value){
-        if(exactIds.has(entry.offer.url))continue;
-        const previous=alternativesById.get(entry.offer.url);
-        if(!previous||previous.rank>entry.rank)alternativesById.set(entry.offer.url,entry);
+        const key=identity(entry.offer);
+        if(exactIds.has(key))continue;
+        const previous=alternativesById.get(key);
+        if(!previous||previous.rank>entry.rank)alternativesById.set(key,entry);
       }
       const similar=[...alternativesById.values()].sort((a,b)=>a.rank-b.rank||a.offer.price-b.offer.price).slice(0,8);
       alternatives.push(...similar.map(({offer,rank,reason})=>({

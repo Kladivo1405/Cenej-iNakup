@@ -106,3 +106,17 @@ Rulesets**, ustvari aktiven Branch Ruleset za privzeto vejo ter vključi
 **Restrict deletions**, **Block force pushes** in **Require a pull request
 before merging**. V repozitoriju z enim vzdrževalcem lahko število zahtevanih
 odobritev ostane 0, da lastnik še vedno lahko združi svoj pull request.
+
+## Primerjava ponudb in kuponi
+
+**Primerjaj ponudbe** odpre kartice izdelkov po trgovinah. Privzeto so znotraj
+ujemanj in nadomestkov najprej aktualne akcije. Pri ponudbah z različnimi
+merskimi enotami razvrščanje primerja cene znotraj iste enote.
+
+Za objavo posodobi obstoječo Supabase Edge Function `search-prices` iz
+`supabase/functions/search-prices/index.ts`. Funkcija bere objavljene datume
+SPAR-a, Mercatorja in Tuša, preverjeni podatki posameznega trgovca pa se na
+strežniku osvežijo po največ eni uri, ko jih aplikacija naslednjič zahteva.
+Kuponi se prikažejo samo na navedene datume po slovenskem času. Če vira ni
+mogoče prebrati, aplikacija ponudi povezavo do trgovca. Tušev D*NAR je prikazan
+kot dobropis po nakupu in se ne odšteje od plačila.

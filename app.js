@@ -79,36 +79,213 @@ function canUsePrice(o){return !o.coupon_condition&&(o.eligible_for_basket===tru
 function alternativesFor(item,store){
  return (alternatives[item.id]||[]).filter(o=>storeOf(o)===store&&numericPrice(o)!==null);
 }
-function renderOfferPicker(item,store,line,current){
- const exact=liveMatches(item,store).sort((a,b)=>numericPrice(a)-numericPrice(b));
- const similar=alternativesFor(item,store);
- const rows=[...new Map([...exact,...similar].map(offer=>[offerId(offer),offer])).values()];
- if(!similar.length&&rows.length<2)return;
- const select=document.createElement('select');
- select.setAttribute('aria-label','Izberi ponudbo: '+item.name);
- select.style.cssText='max-width:100%;width:100%;margin-top:8px';
- select.add(new Option('Samodejna izbira',''));
- for(const offer of rows){
-   const option=new Option([offer.substitution_reason?(Number.isFinite(offer.match_score)?'≈ '+offer.match_score+' %':'Podoben izdelek'):'Točno ujemanje',
-     nameOf(offer),offer.unit,priceLabel(offer),offer.substitution_reason].filter(Boolean).join(' · '),offerId(offer));
-   option.disabled=!canUsePrice(offer);
-   option.selected=!option.disabled&&current&&offerId(current)===option.value;
-   select.add(option);
+function offerRows(item,store){
+ const byId=new Map();
+ for(const offer of [...candidates(item,store),...alternativesFor(item,store)]){
+   const id=offerId(offer);
+   if(!byId.has(id)&&offer.price_status!=='expired')byId.set(id,offer);
  }
- select.onchange=()=>{
-   delete choices[legacyChoiceKey(item,store)];
-   if(select.value)choices[choiceKey(item,store)]=select.value;
-   else delete choices[choiceKey(item,store)];
-   persist();render();
- };
- line.append(select);
- if(rows.some(offer=>!canUsePrice(offer))){
-   const note=document.createElement('small');
-   note.style.display='block';
-   note.textContent='Za izbiro nepotrjenih cen vklopi informativni način.';
-   line.append(note);
- }
+ return [...byId.values()];
 }
+function offerPresentation(offer){
+ const name=nameOf(offer),normalized=normalize(name);
+ let brand=brandOf(offer);
+ if(!brand){
+   const known=normalized.match(/\b(persil|ariel|lenor|faks|duel|denkmit|poli|lasko|union|duracell|energizer|frutek|pampers|barcaffe)\b/)?.[1];
+   if(known)brand=known==='lasko'?'Laško':known==='barcaffe'?'Barcaffè':known[0].toUpperCase()+known.slice(1);
+ }
+ let title=name,variant="";
+ if(/\b(praln\w*|pranje)\b/.test(normalized)){
+   if(/\b(prasek|prah)\b/.test(normalized))title='Pralni prašek';
+   else if(/\b(gel|tekoc\w*)\b/.test(normalized))title='Gel za pranje';
+   else if(/\bkapsul\w*\b/.test(normalized))title='Kapsule za pranje';
+   variant=name.match(/\b(?:color|colour|universal|sensitive|regular|white|black|deep clean|touch of lenor)\b/i)?.[0]||'';
+ }else if(/\bpol[iy]\b/.test(normalized)&&/\b(narez\w*|salam\w*|rezinah)\b/.test(normalized)){
+   title=/\b(narez\w*|rezinah)\b/.test(normalized)?'Narezana salama':'Salama v kosu';
+   brand='Poli';
+   variant=name.match(/\b(?:mediteran|light|lahka|classic|green|z vrtninami|s sirom|mini)\b/i)?.[0]||'';
+ }
+ return {name,title,brand,variant};
+}
+function offerPromotion(offer){
+ return offer.promotion===true&&offer.price_status==='current'&&
+   typeof offer.price_valid_until==='string'&&offer.price_valid_until>=couponDay.format(new Date());
+}
+function offerForQuantity(offer,item){
+ if(!offer||offer.coupon_condition||offer.price_status==='expired')return null;
+ if(offer.price_valid_until&&offer.price_valid_until<couponDay.format(new Date()))return null;
+ if(offer.minimum_quantity&&(!offerPromotion(offer)||item.qty<offer.minimum_quantity)){
+   const price=numericPrice({price:offer.regular_price});
+   if(price===null)return null;
+   return {...offer,price,unit_price:null,promotion:false,price_status:'unverified',eligible_for_basket:false,minimum_quantity:null};
+ }
+ return offer;
+}
+function quantityPrice(offer){
+ const perUnit=unitPriceLabel(offer);
+ const perWash=Number.isSafeInteger(offer.wash_count)&&offer.wash_count>0?money(numericPrice(offer)/offer.wash_count)+'/pranje':'';
+ return [perUnit,perWash].filter(Boolean).join(' · ');
+}
+function offerUnitValue(offer){
+ const size=amount(offer.unit)||amount(nameOf(offer));
+ const value=numericPrice({price:offer.unit_price})??(size?numericPrice(offer)/(size.count*size.v):Infinity);
+ return [offer.unit_measure||size?.kind||'',value];
+}
+function beerBrand(offer){
+ const brand=normalize(brandOf(offer)+' '+nameOf(offer)).match(/\b(lasko|union)\b/)?.[1];
+ return brand==='lasko'?'Laško':brand==='union'?'Union':null;
+}
+const genericBeer=item=>/^pivo(?:\s|$)/.test(normalize(item.name))&&!/\b(lasko|union)\b/.test(normalize(item.name));
+const offerDialog= $('offerDialog');
+let offerOrigin=null;
+offerDialog.addEventListener('close',()=>{
+ if(offerOrigin?.isConnected)offerOrigin.focus();
+ offerOrigin=null;
+});
+$('offerClose').onclick=()=>offerDialog.close();
+function renderOfferPicker(item,store,line,current){
+ const rows=offerRows(item,store);
+ if(!rows.length||(rows.length===1&&current&&offerId(rows[0])===offerId(current)&&!rows[0].substitution_reason))return;
+ const button=document.createElement('button');
+ button.className='soft offer-open';
+ button.type='button';
+ button.textContent='Primerjaj ponudbe ('+rows.length+')';
+ button.dataset.offerItem=item.id;
+ button.setAttribute('aria-haspopup','dialog');
+ button.onclick=()=>openOfferPicker(item,store,rows,button);
+ line.append(button);
+}
+function openOfferPicker(item,store,rows,origin){
+ offerOrigin=origin;
+ $('offerHeading').textContent=item.name;
+ $('offerStore').textContent=store;
+ const sort=$('offerSort');
+ sort.value='promotion';
+ const current=selected(item,store);
+ const match=offer=>!offer.substitution_reason&&isComparable(item,offer);
+ const refresh=()=>{
+   const output=$('offerGroups');
+   output.replaceChildren();
+   function compare(a,b){
+     const aPrice=offerForQuantity(a,item)??a,bPrice=offerForQuantity(b,item)??b;
+     if(sort.value==='unit'){
+       const [ak,av]=offerUnitValue(aPrice),[bk,bv]=offerUnitValue(bPrice);
+       if(ak!==bk)return (ak?0:1)-(bk?0:1)||ak.localeCompare(bk);
+       if(av!==bv)return av-bv;
+     }
+     if(sort.value==='price')return numericPrice(aPrice)-numericPrice(bPrice);
+     return Number(offerPromotion(b))-Number(offerPromotion(a))||
+       (b.match_score??100)-(a.match_score??100)||numericPrice(aPrice)-numericPrice(bPrice);
+   }
+   for(const [title,group] of [
+     ['Ujema se z iskanjem',rows.filter(match)],
+     ['Podobni izdelki',rows.filter(offer=>!match(offer))]
+   ]){
+     if(!group.length)continue;
+     const section=document.createElement('section');
+     const heading=document.createElement('h3');
+     heading.textContent=title;
+     const grid=document.createElement('div');
+     grid.className='offer-grid';
+     grid.append(...group.sort(compare).map(offer=>productCard(item,store,offer,current)));
+     section.append(heading,grid);
+     output.append(section);
+   }
+ };
+ sort.onchange=refresh;
+ $('offerReset').hidden=!(choices[choiceKey(item,store)]||choices[legacyChoiceKey(item,store)]||(genericBeer(item)&&choices.beerBrand));
+ $('offerReset').onclick=()=>{
+   delete choices[choiceKey(item,store)];
+   delete choices[legacyChoiceKey(item,store)];
+   if(genericBeer(item))delete choices.beerBrand;
+   finishOfferPick(item);
+ };
+ refresh();
+ offerDialog.showModal();
+}
+function finishOfferPick(item){
+ persist();
+ offerDialog.close();
+ render();
+ const next=[...document.querySelectorAll('.offer-open')].find(button=>button.dataset.offerItem===item.id);
+ (next??$('storesHeading')).focus({preventScroll:true});
+}
+function productCard(item,store,offer,current){
+ const card=document.createElement('article');
+ card.className='offer-card';
+ const effective=offerForQuantity(offer,item),{name,title,brand,variant}=offerPresentation(offer);
+ const activePromo=offerPromotion(offer);
+ const photo=document.createElement('div');
+ photo.className='product-photo';
+ const placeholder=document.createElement('span');
+ placeholder.setAttribute('aria-hidden','true');
+ placeholder.textContent=/praln|pranje/.test(normalize(name))?'🧺':/\bpivo\b/.test(normalize(name))?'🍺':/mlek|jogurt|masl/.test(normalize(name))?'🥛':'🛒';
+ photo.append(placeholder);
+ if(typeof offer.image_url==='string'&&offer.image_url.startsWith('https://')){
+   const img=document.createElement('img');
+   img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';
+   img.onload=()=>placeholder.hidden=true;
+   img.onerror=()=>img.remove();
+   img.src=offer.image_url;
+   photo.append(img);
+ }
+ card.append(photo);
+ const info=document.createElement('div');
+ info.className='product-info';
+ const titleEl=document.createElement('strong');titleEl.textContent=title;
+ const meta=document.createElement('small');
+ meta.textContent=[brand,variant,offer.unit,offer.wash_count?offer.wash_count+' pranj':''].filter(Boolean).join(' · ');
+ const price=document.createElement('b');price.className='product-price';price.textContent=money(numericPrice(offer));
+ const unit=document.createElement('small');unit.textContent=quantityPrice(offer);
+ info.append(titleEl,meta,price,unit);
+ if(activePromo){
+   const promo=document.createElement('small');
+   promo.className='offer-badge';
+   promo.textContent=offer.minimum_quantity?'Akcija ob nakupu '+offer.minimum_quantity+' ali več':'V akciji';
+   info.append(promo);
+ }
+ if(offer.minimum_quantity&&item.qty<offer.minimum_quantity&&effective){
+   const standard=document.createElement('small');
+   standard.textContent='Pri '+item.qty+' × '+[money(effective.price)+' na kos',quantityPrice(effective)].filter(Boolean).join(' · ');
+   info.append(standard);
+ }
+ const reason=offer.substitution_reason||(!isComparable(item,offer)?'Drugačno ali neznano pakiranje':'');
+ const hints=[reason,effective?.price_status==='unverified'?'Nepotrjena cena':'',offer.coupon_condition||''].filter(Boolean);
+ if(hints.length){
+   const detail=document.createElement('small');
+   detail.className='offer-note';
+   detail.textContent=hints.join(' · ');
+   info.append(detail);
+ }
+ if(name!==title||validOfferLink(offer.url)){
+   const details=document.createElement('details');
+   const toggle=document.createElement('summary');toggle.textContent='Podrobnosti';
+   details.append(toggle);
+   if(name!==title){const full=document.createElement('small');full.textContent=name;details.append(full)}
+   if(validOfferLink(offer.url)){
+     const link=document.createElement('a');
+     link.href=offer.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Odpri ponudbo ↗';
+     details.append(link);
+   }
+   info.append(details);
+ }
+ const selectedNow=Boolean(current&&offerId(current)===offerId(offer));
+ const choose=document.createElement('button');
+ choose.type='button';choose.className=selectedNow?'light product-pick':'primary product-pick';
+ choose.textContent=selectedNow?'Izbrano':effective?.price_status==='unverified'?'Izberi informativno':'Izberi';
+ choose.disabled=!effective||selectedNow;
+ choose.setAttribute('aria-label',choose.textContent+': '+name);
+ choose.onclick=()=>{
+   delete choices[legacyChoiceKey(item,store)];
+   choices[choiceKey(item,store)]=offerId(offer);
+   const brand=genericBeer(item)&&beerBrand(offer);
+   if(brand)choices.beerBrand=brand;
+   finishOfferPick(item);
+ };
+ card.append(info,choose);
+ return card;
+}
+function validOfferLink(url){return typeof url==='string'&&/^https:\/\//i.test(url)}
 
 // Product prices transcribed from Lidl receipts, using purchases without a listed discount.
 const lidlReceiptPrices=[
@@ -207,22 +384,23 @@ function renderUpcoming(item,store,line){
 }
 
 function candidates(item,store){return (offers[item.id]||[]).filter(o=>storeOf(o)===store&&numericPrice(o)!==null).slice(0,12)}
-function options(item,store){return liveMatches(item,store).filter(canUsePrice).sort((a,b)=>numericPrice(a)-numericPrice(b))}
+function options(item,store){return liveMatches(item,store).map(offer=>offerForQuantity(offer,item)).filter(o=>o&&canUsePrice(o)).sort((a,b)=>numericPrice(a)-numericPrice(b))}
 function legacyChoiceKey(item,store){return item.id+'|'+store}
 function choiceKey(item,store){return 'query|'+store+'|'+item.name.trim().toLowerCase().replace(/\s+/g,' ')}
 function selected(item,store){
  const exact=options(item,store);
  const wanted=choices[choiceKey(item,store)]??choices[legacyChoiceKey(item,store)];
- const alternatives=alternativesFor(item,store).filter(canUsePrice);
- return [...exact,...alternatives].find(o=>offerId(o)===wanted||legacyOfferId(o)===wanted)
-   ||exact[0]||includedReceiptPrice(item,store);
+ const chosen=wanted&&offerRows(item,store).find(o=>offerId(o)===wanted||legacyOfferId(o)===wanted||previousOfferId(o)===wanted);
+ const preferred=genericBeer(item)&&choices.beerBrand?exact.find(o=>beerBrand(o)===choices.beerBrand):null;
+ return offerForQuantity(chosen,item)||preferred||exact[0]||includedReceiptPrice(item,store);
 }
 function includedReceiptPrice(item,store){
  const row=receiptPrice(item,store);
  return row&&(row.manual||row.unit!=='1 kg')&&row.receiptNote!=='Možen nadomestek'?row:null;
 }
 function legacyOfferId(o){return String(o.url||'')+'|'+nameOf(o)+'|'+numericPrice(o)+'|'+String(o.unit||'')}
-function offerId(o){return JSON.stringify([o.url||nameOf(o),o.unit||''])}
+function previousOfferId(o){return JSON.stringify([o.url||nameOf(o),o.unit||''])}
+function offerId(o){return JSON.stringify([o.url||'',normalize(nameOf(o)),o.unit||''])}
 function add(){const name=$('newItem').value.trim();if(!name)return;const existing=items.find(item=>choiceKey(item,'')===choiceKey({name},''));
  if(existing){existing.qty++;existing.bought=false;}
  else items.push({id:(crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random())),name,qty:1});
@@ -231,76 +409,157 @@ function modify(id,delta){items=items.map(i=>i.id===id?{...i,qty:Math.max(1,i.qt
 function remove(id){items=items.filter(i=>i.id!==id);delete offers[id];delete alternatives[id];delete upcoming[id];persist();render()}
 const couponSources={
  Spar:'https://www.spar.si/promocije-in-projekti/aktualne-promocije',
- Mercator:'https://www.mercator.si/akcije-in-ugodnosti/',
+ Mercator:'https://www.mercator.si/akcije-in-ugodnosti/novo-ta-vikend-dobite-vec/',
  'Tuš':'https://www.tus.si/katalog/tedenski-kuponi/'
-};
-const coupons={
- // Validity through 26 November is shown in the user's SPAR app on 23 November.
- Spar:{from:'2026-11-23',until:'2026-11-26',label:'25 % na en izdelek',rate:0.25},
- 'Tuš':{from:'2026-11-23',until:'2026-11-23',label:'10–99 % kot dobropis pri nakupu nad 30 €',
-   source:'https://www.tus.si/app/uploads/catalogues/20261111092758_46_akcija_18.11.-24.11.2026_A46_26.pdf#page=16'}
 };
 const couponSelections={};
 const couponDay=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Ljubljana',year:'numeric',month:'2-digit',day:'2-digit'});
-function activeCoupon(store,today=couponDay.format(new Date())){
- const coupon=coupons[store];
- return coupon&&coupon.from<=today&&today<=coupon.until?coupon:null;
+let couponInfo={},couponRefresh=0,couponLoading=false,couponRenderDay='';
+async function refreshCoupons(){
+ if($('pricesView').hidden||document.hidden||couponLoading||Date.now()<couponRefresh)return;
+ const url=localStorage.getItem('cn_sb_url'),key=localStorage.getItem('cn_sb_key');
+ if(!url||!isPublicSupabaseKey(key||''))return;
+ couponLoading=true;
+ render();
+ try{
+   const response=await fetch(url.replace(/\/$/,'')+'/functions/v1/search-prices',{
+     method:'POST',headers:{'Content-Type':'application/json',apikey:key,Authorization:'Bearer '+key},
+     body:JSON.stringify({action:'coupons'}),signal:AbortSignal.timeout(42000)
+   });
+   if(!response.ok)throw Error('HTTP '+response.status);
+   const data=await response.json();
+   if(!data?.stores||typeof data.stores!=='object')throw Error('Manjkajo rezultati kuponov');
+   couponInfo=data.stores;
+   couponRefresh=Date.now()+(Object.keys(couponSources).every(store=>couponInfo[store]?.available)?60:5)*60000;
+ }catch{couponRefresh=Date.now()+5*60000}
+ finally{couponLoading=false;render();}
 }
-function couponDiscount(store,coupon){
- if(!coupon?.rate)return 0;
- const choice=couponSelections[store];
- const item=pendingItems().find(i=>i.id===choice?.itemId);
- const offer=item&&selected(item,store);
- if(!offer||choice.offerId!==legacyOfferId(offer))return 0;
- return Math.round(numericPrice(offer)*100*coupon.rate)/100;
+function currentCoupons(store,today){
+ const coupons=couponInfo[store]?.coupons;
+ return Array.isArray(coupons)?coupons.filter(coupon=>
+   Array.isArray(coupon.dates)&&coupon.dates.includes(today)&&['item','basket','credit'].includes(coupon.kind)&&
+   Number.isFinite(coupon.rate)&&coupon.rate>0&&coupon.rate<1&&Number.isFinite(coupon.minimum)&&
+   coupon.minimum>=0&&typeof coupon.id==='string'
+ ): [];
+}
+function couponLabel(coupon){
+ if(coupon.kind==='item')return Math.round(coupon.rate*100)+' % na en izdelek';
+ if(coupon.kind==='credit')return Math.round(coupon.rate*100)+'–'+Math.round((coupon.maximumRate||coupon.rate)*100)+' % vračila kot D*NAR';
+ return Math.round(coupon.rate*100)+' % na nakup';
+}
+function couponAllowed(offer){
+ return !/\b(cigaret\w*|toba[kc]\w*|vinjet\w*|casopis\w*|revij\w*|dariln\w* kartic\w*|povratn\w* embalaz\w*|zacetn\w* formul\w*)\b/.test(normalize(nameOf(offer)));
+}
+function couponChoices(coupon,rows,complete){
+ const rowsEligible=rows.filter(({offer})=>couponAllowed(offer));
+ const eligible=rowsEligible.reduce((total,row)=>total+row.cents*row.item.qty,0);
+ const threshold=Math.round(coupon.minimum*100);
+ if(coupon.kind==='item'){
+   return rowsEligible.filter(({offer,cents})=>
+     !offerPromotion(offer)&&!offer.lastKnown&&(!threshold||(complete&&eligible-cents>threshold))
+   ).map(row=>({...row,saving:Math.round(row.cents*coupon.rate)}));
+ }
+ if(!complete||eligible<=threshold)return [];
+ if(coupon.kind==='credit')return [{saving:0}];
+ return [{saving:Math.round(eligible*coupon.rate)}];
+}
+function couponStatus(coupon,result){
+ const options=couponChoices(coupon,result.rows,!result.missing.length);
+ if(coupon.kind==='credit'){
+   return 'Pri nakupu nad '+money(coupon.minimum)+'. Dobropis za upravičene izdelke po redni ceni se naloži po nakupu.';
+ }
+ if(coupon.kind==='item'){
+   const condition=coupon.minimum?'Preostala košarica mora presegati '+money(coupon.minimum)+'. ':'';
+   const best=Math.max(0,...options.map(option=>option.saving));
+   return condition+(best?'Ocenjeni prihranek do '+money(best/100)+'.':'V košarici še ni primernega izdelka.');
+ }
+ if(options.length)return 'Pri nakupu nad '+money(coupon.minimum)+'. Ocenjeni prihranek '+money(options[0].saving/100)+'.';
+ return 'Pri nakupu nad '+money(coupon.minimum)+'. '+(result.missing.length?'Za oceno dodaj manjkajoče cene.':'Pogoj v košarici še ni dosežen.');
+}
+function chooseCoupon(store,selection,focus){
+ couponSelections[store]=selection;
+ render();
+ $(focus)?.focus({preventScroll:true});
 }
 function renderCoupon(result,card){
- const {store,coupon,discount}=result;
+ const {store,coupons,today,discount}=result;
  if(!couponSources[store])return;
  const section=document.createElement('div');
  section.className='line';
  const title=document.createElement('b');
  title.textContent='Današnji kuponi';
  section.append(title);
- const note=document.createElement('p');
- note.className='status';
- const until=coupon?.until.split('-').reverse().map(Number).join('. ');
- note.textContent=coupon?coupon.label+' · do '+until:'Za danes nimamo potrjenega kupona.';
- section.append(note);
- if(coupon?.rate){
-   const select=document.createElement('select');
-   select.setAttribute('aria-label','Izberi upravičen izdelek za kupon '+store);
-   select.add(new Option('Brez kupona',''));
-   for(const item of pendingItems()){
-     const offer=selected(item,store);
-     if(!offer)continue;
-     const saving=Math.round(numericPrice(offer)*100*coupon.rate)/100;
-     if(saving<=0)continue;
-     const option=new Option(nameOf(offer)+' · prihranek '+money(saving),item.id);
-     option.selected=couponSelections[store]?.itemId===item.id&&couponSelections[store]?.offerId===legacyOfferId(offer);
-     select.add(option);
+ const current=couponSelections[store];
+ const choices=document.createElement('div');
+ choices.className='coupon-options';
+ for(const coupon of coupons){
+   const row=document.createElement('div');
+   row.className='coupon-choice';
+   const title=document.createElement('strong');
+   title.textContent=couponLabel(coupon);
+   const note=document.createElement('p');
+   note.className='status';
+   note.textContent=couponStatus(coupon,result);
+   row.append(title,note);
+   const options=couponChoices(coupon,result.rows,!result.missing.length);
+   const chosen=current?.day===today&&current.id===coupon.id;
+   if(coupon.kind==='item'&&options.length){
+     const select=document.createElement('select');
+     select.id='coupon-'+coupon.id;
+     select.setAttribute('aria-label','Izberi izdelek za kupon '+store);
+     select.add(new Option('Brez kupona',''));
+     for(const option of options)select.add(new Option(offerPresentation(option.offer).title+' · '+money(option.saving/100),option.item.id));
+     if(chosen&&discount)select.value=current.itemId;
+     select.onchange=()=>{
+       const option=options.find(({item})=>item.id===select.value);
+       chooseCoupon(store,option?{id:coupon.id,day:today,itemId:option.item.id,offerId:legacyOfferId(option.offer)}:null,select.id);
+     };
+     row.append(select);
    }
-   select.disabled=select.options.length===1;
-   select.onchange=()=>{
-     const item=items.find(i=>i.id===select.value);
-     couponSelections[store]=item?{itemId:item.id,offerId:legacyOfferId(selected(item,store))}:null;
-     render();
-   };
-   section.append(select);
-   const details=document.createElement('p');
-   details.className='status';
-   details.textContent=(discount?'Ocenjeni popust −'+money(discount)+' za en kos. ':'')+'Izberi izdelek, za katerega velja kupon.';
-   section.append(details);
+   if(coupon.kind==='basket'&&options.length){
+     const button=document.createElement('button');button.type='button';button.className='soft';
+     button.id='coupon-'+coupon.id;
+     button.textContent=chosen&&discount?'Odstrani kupon':'Uporabi v izračunu';
+     button.onclick=()=>chooseCoupon(store,chosen?null:{id:coupon.id,day:today},button.id);
+     row.append(button);
+   }
+   const link=document.createElement('a');
+   link.href=validOfferLink(coupon.source)?coupon.source:couponSources[store];
+   link.target='_blank';link.rel='noopener noreferrer';link.textContent='Pogoji pri trgovcu ↗';
+   row.append(link);
+   choices.append(row);
  }
- const link=document.createElement('a');
- link.href=coupon?.source||couponSources[store];
- link.target='_blank';
- link.rel='noopener noreferrer';
- link.textContent='Pogoji pri trgovcu ↗';
- section.append(link);
+ if(choices.children.length)section.append(choices);
+ else{
+   const note=document.createElement('p');
+   note.className='status';
+   note.textContent=couponLoading?'Preverjam kupone …':couponInfo[store]?.available?'Danes ni potrjenega splošnega kupona.':'Današnje objave kuponov ni bilo mogoče potrditi.';
+   const link=document.createElement('a');
+   link.href=couponSources[store];link.target='_blank';link.rel='noopener noreferrer';link.textContent='Kuponi pri trgovcu ↗';
+   section.append(note,link);
+ }
  card.append(section);
 }
-function calc(store){let total=0,missing=[],unverified=[];for(const i of pendingItems()){const o=selected(i,store);if(!o)missing.push(i.name);else {total+=numericPrice(o)*i.qty;if(o.eligible_for_basket!==true)unverified.push(i.name)}}const coupon=activeCoupon(store),discount=couponDiscount(store,coupon);return {store,total:total-discount,missing,unverified,coupon,discount}}
+function calc(store,today){
+ const rows=[],missing=[],unverified=[];
+ let total=0;
+ for(const item of pendingItems()){
+   const offer=selected(item,store);
+   if(!offer){missing.push(item.name);continue}
+   const cents=Math.round(numericPrice(offer)*100);
+   rows.push({item,offer,cents});
+   total+=cents*item.qty;
+   if(offer.eligible_for_basket!==true)unverified.push(item.name);
+ }
+ const coupons=currentCoupons(store,today);
+ const choice=couponSelections[store];
+ const coupon=coupons.find(coupon=>choice?.day===today&&choice.id===coupon.id);
+ const options=coupon?couponChoices(coupon,rows,!missing.length):[];
+ const match=coupon?.kind==='item'?options.find(option=>option.item.id===choice.itemId&&choice.offerId===legacyOfferId(option.offer)):options[0];
+ const saving=match?.saving??0;
+ return {store,total:(total-saving)/100,discount:saving/100,missing,unverified,rows,coupons,today};
+}
+
 function renderStoreNavigation(results){
  const nav=$('storeNav');
  nav.replaceChildren();
@@ -325,6 +584,12 @@ function renderStoreNavigation(results){
    const coverage=document.createElement('small');
    coverage.textContent=!pendingItems().length?'Ni preostalih izdelkov':result.missing.length?result.missing.length+' brez cene':'Vse cene najdene';
    button.append(mark,document.createTextNode(result.store),total,coverage);
+   if(result.coupons.length){
+     const note=document.createElement('small');
+     note.className='offer-badge';
+     note.textContent=result.coupons.length===1?'1 kupon':result.coupons.length+' kupona';
+     button.append(note);
+   }
    button.onclick=()=>{
      openStore=openStore===result.store?null:result.store;
      render();
@@ -335,6 +600,7 @@ function renderStoreNavigation(results){
 }
 function showView(focus=false){
  const view=location.hash==='#cene'?'prices':location.hash==='#listek'?'list':'overview';
+ if(view!=='prices'&&offerDialog.open)offerDialog.close();
  for(const panel of ['overview','list','prices']){
    $(panel+'View').hidden=panel!==view;
    const tab=$(panel+'Tab');
@@ -342,6 +608,7 @@ function showView(focus=false){
    else tab.removeAttribute('aria-current');
  }
  $('overviewTools').hidden=view!=='overview';
+ if(view==='prices')void refreshCoupons();
  if(location.hash==='#nastavitve'){
    $('connectionSettings').open=true;
    if(focus)$('sburl').focus();
@@ -351,6 +618,13 @@ function showView(focus=false){
  }
 }
 window.addEventListener('hashchange',()=>showView(true));
+function checkCouponClock(){
+ if($('pricesView').hidden||document.hidden)return;
+ if(couponRenderDay!==couponDay.format(new Date()))render();
+ void refreshCoupons();
+}
+document.addEventListener('visibilitychange',checkCouponClock);
+setInterval(checkCouponClock,60000);
 function openList(id){
  if(busy)return;
  listState.activeId=id;
@@ -430,10 +704,11 @@ function render(){
    div.querySelector('[data-act=remove]').onclick=()=>remove(i.id);
    list.append(div);
  }
-const results=STORES.map(calc),complete=results.filter(x=>!x.missing.length&&pending.length),confirmed=complete.filter(x=>!x.unverified.length&&!x.discount),winner=[...confirmed].sort((a,b)=>a.total-b.total)[0],infoWinner=[...complete].sort((a,b)=>a.total-b.total)[0];$('winner').textContent=winner?winner.store+' · '+money(winner.total):'—';$('winnerNote').textContent=winner?'Najcenejša popolna košarica s potrjenimi cenami.':'Nobena trgovina nima potrjenih cen za vse izdelke.';let info=$('infoSummary');if(info){info.textContent=(includeUnverified||results.some(r=>r.discount))?(infoWinner?'Informativno najcenejša: '+infoWinner.store+' · '+money(infoWinner.total)+(infoWinner.discount?' (ocena s kuponom)':infoWinner.unverified.length?' (vključuje nepotrjene cene)':''):'Ni popolne informativne košarice.'):'Vklopi informativni način, če želiš vključiti primerljive, vendar nepotrjene ponudbe.'}
+couponRenderDay=couponDay.format(new Date());
+const results=STORES.map(store=>calc(store,couponRenderDay)),complete=results.filter(x=>!x.missing.length&&pending.length),confirmed=complete.filter(x=>!x.unverified.length&&!x.discount),winner=[...confirmed].sort((a,b)=>a.total-b.total)[0],infoWinner=[...complete].sort((a,b)=>a.total-b.total)[0];$('winner').textContent=winner?winner.store+' · '+money(winner.total):'—';$('winnerNote').textContent=winner?'Najcenejša popolna košarica s potrjenimi cenami.':'Nobena trgovina nima potrjenih cen za vse izdelke.';let info=$('infoSummary');if(info){info.textContent=(includeUnverified||results.some(r=>r.discount))?(infoWinner?'Informativno najcenejša: '+infoWinner.store+' · '+money(infoWinner.total)+(infoWinner.discount?' (ocena s kuponom)':infoWinner.unverified.length?' (vključuje nepotrjene cene)':''):'Ni popolne informativne košarice.'):'Vklopi informativni način, če želiš vključiti primerljive, vendar nepotrjene ponudbe.'}
 renderStoreNavigation(results);
 const root=$('stores');root.replaceChildren();for(const r of results.filter(result=>result.store===openStore)){const card=document.createElement('section');card.className='card store';const head=document.createElement('div');head.className='storehead';head.innerHTML=`<h2>${esc(r.store)}</h2>${winner&&winner.store===r.store?'<span class="pill">Najcenejša potrjena</span>':r.missing.length?`<span class="warn">⚠ ${r.missing.length} manjka</span>`:''}`;card.append(head);
-for(const i of pending){const o=selected(i,r.store),unitPrice=o?unitPriceLabel(o):'',line=document.createElement('div');line.className='line';if(!o){line.innerHTML=`<div class="row"><div><b>${esc(i.name)}</b><br><small>${failures[i.id]?'Iskanje ni uspelo':'Ni potrjene primerljive ponudbe'}</small></div><span class="warn">Ni cene</span></div>`;const raw=candidates(i,r.store);if(raw.length){const details=document.createElement('details');details.innerHTML=`<summary style="font-size:12px;color:#76530f;cursor:pointer;margin-top:8px">${raw.length} najdenih ponudb (nepotrjene / neprimerljive) – poglej</summary>`;for(const candidate of raw){const p=document.createElement('p');p.className='source';p.textContent=nameOf(candidate)+' · '+priceLabel(candidate)+' · '+(candidate.unit||'količina ni znana')+' · '+(candidate.price_status||'nepotrjeno');details.append(p)}line.append(details)}const hasUpcoming=renderUpcoming(i,r.store,line),receipt=receiptPrice(i,r.store);if(receipt)renderReceiptPrice(receipt,line);else if(!hasUpcoming)renderFlyerPrice(i,r.store,line)}else{line.innerHTML=`<div class="offer"><div style="flex:1"><small>${esc(i.name)} · ${i.qty} ×</small><br><b>${o.substitution_reason?"Nadomestek: ":""}${esc(nameOf(o))}</b><br><small>${esc(brandOf(o))} ${esc(o.unit||'')}</small><br>${o.substitution_reason?`<small>${esc(o.substitution_reason)}</small><br>`:''}<small>${o.eligible_for_basket===true?'✓ Potrjena ponudba':o.lastKnown?'Zadnja znana cena':'⚠ Nepotrjena cena – informativno'}</small><br><small>${o.checked_at?'Zajeto: '+esc(new Date(o.checked_at).toLocaleString('sl-SI')):''}</small>${o.url&&/^https:\/\//i.test(o.url)?`<br><a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">Odpri ponudbo ↗</a>`:''}</div><div class="offerprice">${money(numericPrice(o)*i.qty)}${unitPrice?`<small class="unit-price">${esc(unitPrice)}</small>`: ''}</div></div>`;}renderOfferPicker(i,r.store,line,o);card.append(line)}
+for(const i of pending){const o=selected(i,r.store),unitPrice=o?quantityPrice(o):'',line=document.createElement('div');line.className='line';if(!o){line.innerHTML=`<div class="row"><div><b>${esc(i.name)}</b><br><small>${failures[i.id]?'Iskanje ni uspelo':'Ni potrjene primerljive ponudbe'}</small></div><span class="warn">Ni cene</span></div>`;const hasUpcoming=renderUpcoming(i,r.store,line),receipt=receiptPrice(i,r.store);if(receipt)renderReceiptPrice(receipt,line);else if(!hasUpcoming)renderFlyerPrice(i,r.store,line)}else{line.innerHTML=`<div class="offer"><div style="flex:1"><small>${esc(i.name)} · ${i.qty} ×</small><br><b>${o.substitution_reason?"Nadomestek: ":""}${esc(nameOf(o))}</b><br><small>${esc(brandOf(o))} ${esc(o.unit||'')}</small><br>${o.substitution_reason?`<small>${esc(o.substitution_reason)}</small><br>`:''}<small>${o.eligible_for_basket===true?'✓ Potrjena ponudba':o.lastKnown?'Zadnja znana cena':o.price_status==='current'?'Aktualna ponudba – informativno':'⚠ Nepotrjena cena – informativno'}</small><br><small>${o.checked_at?'Zajeto: '+esc(new Date(o.checked_at).toLocaleString('sl-SI')):''}</small>${o.url&&/^https:\/\//i.test(o.url)?`<br><a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">Odpri ponudbo ↗</a>`:''}</div><div class="offerprice">${money(numericPrice(o)*i.qty)}${unitPrice?`<small class="unit-price">${esc(unitPrice)}</small>`: ''}</div></div>`;}renderOfferPicker(i,r.store,line,o);card.append(line)}
 renderCoupon(r,card);
 const manualButton=document.createElement('button');
 manualButton.type='button';
@@ -852,6 +1127,7 @@ $('save').onclick=()=>{
  }
  localStorage.setItem('cn_sb_url',url);
  localStorage.setItem('cn_sb_key',key);
+ couponRefresh=0;couponInfo={};
  $('configState').textContent='Povezava je shranjena v tem brskalniku.';
 };
 $('sburl').value=localStorage.getItem('cn_sb_url')||'';
