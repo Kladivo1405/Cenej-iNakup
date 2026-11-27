@@ -583,7 +583,7 @@ async function recognizeReceiptWithAI(file,store){
      'x-receipt-store':store==='Tuš'?'Tus':store
    },
    body:jpeg,
-   signal:AbortSignal.timeout(45000)
+   signal:AbortSignal.timeout(55000)
  });
  const result=await response.json().catch(()=>null);
  if(!response.ok){
