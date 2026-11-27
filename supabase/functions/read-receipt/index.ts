@@ -106,7 +106,17 @@ Deno.serve(async (req) => {
         text: {format: {type: "json_schema", name: "receipt", strict: true, schema}},
       }),
     });
-    if (!response.ok) return json({error: "Branje z AI trenutno ni uspelo."}, 502);
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null);
+      const code = failure?.error?.code;
+      const safeCode = typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code) ? code : undefined;
+      console.warn("OpenAI receipt request failed", {status: response.status, code: safeCode});
+      const error = response.status === 401 ? "OpenAI je zavrnil ključ API."
+        : safeCode === "insufficient_quota" ? "OpenAI API nima razpoložljive kvote. Preveri obračun."
+        : response.status === 429 ? "OpenAI je začasno omejil število zahtev."
+        : "OpenAI ni obdelal zahteve (HTTP " + response.status + ").";
+      return json({error}, 502);
+    }
     const result = await response.json();
     const text = result.output?.flatMap((item: {content?: unknown[]}) => item.content ?? [])
       .find((part: {type: string}) => part.type === "output_text")?.text;
@@ -131,7 +141,9 @@ Deno.serve(async (req) => {
         }];
       }),
     });
-  } catch {
-    return json({error: "Branje z AI trenutno ni uspelo."}, 502);
+  } catch (error) {
+    const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+    console.warn(timedOut ? "Receipt request timed out" : "Receipt request failed");
+    return json({error: timedOut ? "Branje z AI je trajalo predolgo." : "Branje z AI trenutno ni uspelo."}, 502);
   }
 });
