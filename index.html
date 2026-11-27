@@ -757,21 +757,51 @@ function rememberProduct(name){
  writeProfile(preferencesKey,preferences);
 }
 const commonProducts=['Mleko','Trajno mleko 3,5 % 1 l','Sveže mleko','Kruh','Kajzerica','Jajca 10 kos','Maslo 250 g','Grški jogurt 500 g','Poli narezek 150 g','Sir','Čips','Baterije AA','Planinski čaj','Hrenovke','Jabolka','Banane','Krompir','Paradižnik','Pivo','Belo vino','Riž','Testenine','Moka','Kava','Mineralna voda','Sadna kaša','Plenice'];
+function suggestionWords(text){
+ return normalize(text)
+   .replace(/(\d),(?=\d)/g,'$1.')
+   .replace(/(\d)\s+%/g,'$1%')
+   .replace(/(\d)(?=(?:kg|g|ml|cl|dl|l|kos(?:ov|i|a)?)\b)/g,'$1 ')
+   .match(/[a-z]+|\d+(?:\.\d+)?%?/g)||[];
+}
+function oneTypo(input,word){
+ if(input.length<4||Math.abs(input.length-word.length)>1)return false;
+ const index=[...input].findIndex((letter,i)=>letter!==word[i]);
+ if(index===-1)return word.length===input.length+1;
+ if(input.length<word.length)return input.slice(index)===word.slice(index+1);
+ if(input.length>word.length)return input.slice(index+1)===word.slice(index);
+ return input.slice(index+1)===word.slice(index+1)||
+   (input[index]===word[index+1]&&input[index+1]===word[index]&&input.slice(index+2)===word.slice(index+2));
+}
+function suggestionRank(tokens,words){
+ let score=0;
+ for(const token of tokens){
+   if(words.includes(token))continue;
+   // Quantities and percentages must match as written.
+   if(/^\d/.test(token))return Infinity;
+   if(words.some(word=>word.includes(token)))score++;
+   else if(words.some(word=>oneTypo(token,word)))score+=2;
+   else return Infinity;
+ }
+ return score;
+}
 function renderSuggestions(){
  const target=$('suggestions'),query=normalize($('newItem').value);
- const tokens=query.split(/\s+/).filter(Boolean);
+ const tokens=suggestionWords(query);
  target.replaceChildren();
  const matches=new Map();
  const personal=[...preferences,...receiptHistory];
- for(const product of [...personal,...(query?commonProducts.map(name=>({name})):[])]){
+ for(const product of [...personal,...(tokens.length?commonProducts.map(name=>({name})):[])]){
    const key=normalize(product.name);
-   if(key&&key!==query&&tokens.every(token=>key.includes(token))&&!matches.has(key))matches.set(key,product);
+   if(!key||key===query||matches.has(key))continue;
+   const rank=suggestionRank(tokens,suggestionWords(product.name));
+   if(Number.isFinite(rank))matches.set(key,{product,rank});
  }
- const ranked=[...matches.entries()].sort(([a,x],[b,y])=>
-   (y.count||0)-(x.count||0)||Number(b.startsWith(query))-Number(a.startsWith(query)));
+ const ranked=[...matches.values()].sort((a,b)=>a.rank-b.rank||
+   (b.product.count||0)-(a.product.count||0));
  $('suggestionPanel').hidden=!ranked.length;
- $('suggestionLabel').textContent=query?'Predlogi':'Pogosto dodano';
- for(const [,product] of ranked.slice(0,6)){
+ $('suggestionLabel').textContent=tokens.length?'Predlogi':'Pogosto dodano';
+ for(const {product} of ranked.slice(0,6)){
    const button=document.createElement('button');
    button.type='button';
    button.className='soft';
