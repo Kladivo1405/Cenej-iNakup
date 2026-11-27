@@ -13,28 +13,43 @@
 #stores .store{border-top:3px solid var(--green)}
 #stores .storehead{gap:8px;flex-wrap:wrap}
 @media(max-width:700px){.store-navigation{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.store-tile{padding:10px 4px}}
-</style></head><body><header><div><h1>🛒 CenejšiNakup</h1><p>Tvoj listek. Šest trgovin. Primerljive ponudbe.</p></div></header><main>
-<section class="card" aria-labelledby="sharedTitle">
-<h2 id="sharedTitle">Skupni nakupovalni listki</h2>
-<button id="googleLogin" type="button" class="primary">Prijavi se z Googlom</button>
-<div id="sharedAccount" hidden>
-<div class="row"><span id="sharedUser"></span><button id="googleLogout" type="button" class="light">Odjava</button></div>
-<form id="sharedCreate" class="add"><input id="sharedName" placeholder="Ime novega listka" aria-label="Ime novega listka" maxlength="80" required><button class="soft">Ustvari</button></form>
-<label><input id="sharedCopy" type="checkbox" style="width:auto" checked> Kopiraj moj trenutni listek</label>
-<div class="row" style="flex-wrap:wrap;margin-top:12px"><label>Skupni listek <select id="sharedSelect"></select></label><button id="sharedInvite" type="button" class="soft" hidden>Pripravi povabilo</button></div>
-<p id="sharedLinkRow" hidden><label>Povezava za eno pridružitev <input id="sharedLink" readonly></label><button id="sharedCopyLink" type="button" class="light">Kopiraj povezavo</button></p>
-<div id="sharedBasket" hidden>
-<form id="sharedAdd" class="add"><input id="sharedProduct" placeholder="Dodaj skupni izdelek" aria-label="Skupni izdelek" maxlength="100" required><button class="primary">Dodaj</button></form>
-<div id="sharedItems"></div>
-</div></div>
-<p id="sharedStatus" class="status" role="status"></p>
-</section>
-<section class="card">
-<label>Profil <select id="profileSelect"></select></label>
-<details id="newProfile" style="margin-top:10px"><summary>Nov profil</summary>
-<form id="profileForm" class="add"><input id="profileName" aria-label="Ime profila" maxlength="40" required><button class="soft">Ustvari</button></form>
-</details><div id="profileStatus" class="status" role="status"></div></section>
-<section class="card"><h2>Moj nakupovalni listek</h2><div class="add"><input id="newItem" placeholder="Npr. mleko 1,5 % 1 l" aria-label="Nov izdelek"><button class="primary" id="addBtn">Dodaj</button></div><div id="list"></div><div class="row" style="margin-top:12px;flex-wrap:wrap"><button class="primary" id="refresh">🔎 Poišči cene</button><button class="light" id="clear">Počisti listek</button></div><p class="status" id="progress" aria-live="polite"></p><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice">Neznane, neprimerljive ali nepotrjene cene niso vključene v izračun. Delni seštevek ni popolna košarica.</div></section>
+
+.app-nav{position:sticky;top:0;z-index:2;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:6px;background:#edf3ed;border:1px solid var(--line);border-radius:14px;margin-bottom:16px}
+.app-nav a{display:flex;gap:8px;align-items:center;justify-content:center;min-height:44px;border-radius:10px;text-decoration:none;color:var(--dark);font-weight:700}
+.app-nav a[aria-current]{background:var(--dark);color:white}
+.app-nav span{background:#d5eadb;color:#142d21;border-radius:99px;padding:2px 7px;font-size:12px}
+.shopping-list,.price-overview{padding:clamp(14px,3vw,22px)}
+.product-search{margin-bottom:6px}
+.product-search input,.product-search button,.list-actions button{min-height:44px}
+#suggestionLabel{margin:10px 0 5px;font-weight:650}
+#suggestions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+#suggestions button{font-size:13px;text-align:left;overflow-wrap:anywhere}
+.list-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.list-actions .primary{flex:1}
+button:disabled{cursor:default;opacity:.55}
+.shopping-list #list .line{gap:6px}
+.shopping-list #list .line>div:first-child{min-width:0;overflow-wrap:anywhere}
+#listHeading,#pricesHeading,#connectionSettings{scroll-margin-top:85px}
+#listView details.card>summary,#pricesView details.card>summary{cursor:pointer;font-weight:650}
+</style></head><body><header><div><h1>CenejšiNakup</h1></div></header><main>
+<nav class="app-nav" aria-label="Pogledi aplikacije">
+ <a href="#listek" id="listTab" aria-current="page">Listek <span id="listCount" hidden></span></a>
+ <a href="#cene" id="pricesTab">Cene</a>
+</nav>
+<section id="listView" aria-labelledby="listHeading">
+ <div class="card shopping-list">
+  <h2 id="listHeading" tabindex="-1">Moj nakupovalni listek</h2>
+  <form class="add product-search" id="productForm">
+   <input id="newItem" type="search" placeholder="Poišči ali vpiši izdelek" aria-label="Poišči ali vpiši izdelek" autocomplete="off" maxlength="100">
+   <button id="addBtn" type="submit" class="primary">Dodaj</button>
+  </form>
+  <div id="suggestionPanel" hidden><p id="suggestionLabel" class="status"></p><div id="suggestions"></div></div>
+  <div id="list"></div>
+  <div class="list-actions">
+   <button class="primary" id="refresh" type="button">Poišči cene</button>
+   <button class="light" id="clear" type="button">Počisti listek</button>
+  </div>
+ </div>
 <details class="card"><summary>Naloži račun</summary>
 <form id="receiptForm" novalidate>
 <p><label>Trgovina <select id="receiptStore" required><option value="">Izberi trgovino</option></select></label></p>
@@ -49,6 +64,35 @@
 <button type="button" class="light" id="receiptAdd">Dodaj postavko</button>
 <button type="submit" class="primary">Shrani izbrane postavke</button>
 <p id="receiptSaveStatus" class="warn" role="status"></p></fieldset></form></details>
+<details class="card" id="sharedTools"><summary>Skupni nakupovalni listki</summary>
+<button id="googleLogin" type="button" class="primary">Prijavi se z Googlom</button>
+<div id="sharedAccount" hidden>
+<div class="row"><span id="sharedUser"></span><button id="googleLogout" type="button" class="light">Odjava</button></div>
+<form id="sharedCreate" class="add"><input id="sharedName" placeholder="Ime novega listka" aria-label="Ime novega listka" maxlength="80" required><button class="soft">Ustvari</button></form>
+<label><input id="sharedCopy" type="checkbox" style="width:auto" checked> Kopiraj moj trenutni listek</label>
+<div class="row" style="flex-wrap:wrap;margin-top:12px"><label>Skupni listek <select id="sharedSelect"></select></label><button id="sharedInvite" type="button" class="soft" hidden>Pripravi povabilo</button></div>
+<p id="sharedLinkRow" hidden><label>Povezava za eno pridružitev <input id="sharedLink" readonly></label><button id="sharedCopyLink" type="button" class="light">Kopiraj povezavo</button></p>
+<div id="sharedBasket" hidden>
+<form id="sharedAdd" class="add"><input id="sharedProduct" placeholder="Dodaj skupni izdelek" aria-label="Skupni izdelek" maxlength="100" required><button class="primary">Dodaj</button></form>
+<div id="sharedItems"></div>
+</div></div>
+<p id="sharedStatus" class="status" role="status"></p>
+</details>
+<details class="card"><summary>Profili</summary>
+<label>Profil <select id="profileSelect"></select></label>
+<details id="newProfile" style="margin-top:10px"><summary>Nov profil</summary>
+<form id="profileForm" class="add"><input id="profileName" aria-label="Ime profila" maxlength="40" required><button class="soft">Ustvari</button></form>
+</details><div id="profileStatus" class="status" role="status"></div></details>
+<details class="card" id="connectionSettings"><summary>Povezava s Supabase</summary><p class="muted">Če si povezavo že shranil v prejšnji različici, ostane shranjena v istem brskalniku. Uporabi samo publishable/anon ključ, nikoli secret ali service_role ključa.</p><div class="config"><input id="sburl" placeholder="https://projekt.supabase.co" aria-label="Supabase URL"><input id="sbkey" placeholder="Publishable / anon key" aria-label="Supabase ključ"><button class="soft" id="save">Shrani</button></div><p class="status" id="configState"></p><details><summary>Stanje virov</summary><div class="source" id="sources">Še ni iskanja.</div></details></details></section>
+<section id="pricesView" aria-labelledby="pricesHeading" hidden>
+ <div class="card price-overview">
+  <h2 id="pricesHeading" tabindex="-1">Pregled cen</h2>
+  <p class="status" id="progress" role="status"></p>
+  <p id="priceEmpty" class="muted">Najprej dodaj izdelke na listek.</p>
+  <a id="priceSettings" href="#nastavitve" hidden>Odpri nastavitve povezave</a>
+  <div id="priceSummary"><div class="summary"><small>Najcenejša popolna košarica (glede na tvoje izbire)</small><div><strong id="winner">—</strong></div><div id="winnerNote" style="font-size:13px;color:#c5d7ca">Dodaj izdelke in poišči cene.</div><p id="infoSummary" style="margin-top:8px;font-size:13px;color:#c5d7ca"></p></div><div class="notice" style="margin-top:12px"><label><input id="infoMode" type="checkbox" style="width:auto;margin-right:8px">Vključi primerljive ponudbe z nepotrjeno ceno (informativno)</label><div class="status" style="margin-top:5px">Cene niso nujno aktualne. Pri izračunu so jasno označene.</div></div></div>
+ </div>
+ <div id="priceStores"><h2 style="margin:22px 3px 13px" id="storesHeading">Košarice po trgovinah</h2><div id="storeNav" class="store-navigation" role="group" aria-labelledby="storesHeading"></div><div id="stores"></div>
 <details id="manualPrices" class="card"><summary>Vnesi ceno</summary>
 <form id="manualPriceForm" style="display:grid;gap:10px;margin-top:10px">
 <label>Trgovina <select id="manualStore" required><option value="">Izberi trgovino</option></select></label>
@@ -57,8 +101,9 @@
 <label>Cena pakiranja (€) <input id="manualPrice" inputmode="decimal" required></label>
 <button class="primary">Shrani ceno</button>
 </form><p id="manualStatus" class="status" role="status"></p></details>
-<h2 style="margin:22px 3px 13px" id="storesHeading">Košarice po trgovinah</h2><div id="storeNav" class="store-navigation" role="group" aria-labelledby="storesHeading"></div><div id="stores"></div>
-<section class="card" style="margin-top:15px"><h2>Povezava s Supabase</h2><p class="muted">Če si povezavo že shranil v prejšnji različici, ostane shranjena v istem brskalniku. Uporabi samo publishable/anon ključ, nikoli secret ali service_role ključa.</p><div class="config"><input id="sburl" placeholder="https://projekt.supabase.co" aria-label="Supabase URL"><input id="sbkey" placeholder="Publishable / anon key" aria-label="Supabase ključ"><button class="soft" id="save">Shrani</button></div><p class="status" id="configState"></p><details><summary>Stanje virov</summary><div class="source" id="sources">Še ni iskanja.</div></details></section><p class="muted" style="text-align:center;font-size:12px">v0.7 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
+</div>
+</section>
+<p class="muted" style="text-align:center;font-size:12px">v0.7 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
 </main><script>
 'use strict';
 const STORES=['Lidl','Hofer','Spar','Tuš','Mercator','Eurospin'];
@@ -275,7 +320,10 @@ function includedReceiptPrice(item,store){
 }
 function legacyOfferId(o){return String(o.url||'')+'|'+nameOf(o)+'|'+numericPrice(o)+'|'+String(o.unit||'')}
 function offerId(o){return JSON.stringify([o.url||nameOf(o),o.unit||''])}
-function add(){const name=$('newItem').value.trim();if(!name)return;items.push({id:(crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random())),name,qty:1});rememberProduct(name);$('newItem').value='';renderSuggestions();persist();render()}
+function add(){const name=$('newItem').value.trim();if(!name)return;const existing=items.find(item=>choiceKey(item,'')===choiceKey({name},''));
+ if(existing)existing.qty++;
+ else items.push({id:(crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random())),name,qty:1});
+ rememberProduct(name);$('newItem').value='';renderSuggestions();persist();render()}
 function modify(id,delta){items=items.map(i=>i.id===id?{...i,qty:Math.max(1,i.qty+delta)}:i);persist();render()}
 function remove(id){items=items.filter(i=>i.id!==id);delete offers[id];delete alternatives[id];delete upcoming[id];persist();render()}
 const couponSources={
@@ -382,7 +430,31 @@ function renderStoreNavigation(results){
    nav.append(button);
  }
 }
-function render(){const list=$('list');list.replaceChildren();if(!items.length)list.innerHTML='<p class="muted">Listek je prazen.</p>';
+function showView(focus=false){
+ const prices=location.hash==='#cene';
+ $('listView').hidden=prices;
+ $('pricesView').hidden=!prices;
+ const activeTab=$(prices?'pricesTab':'listTab'),otherTab=$(prices?'listTab':'pricesTab');
+ activeTab.setAttribute('aria-current','page');
+ otherTab.removeAttribute('aria-current');
+ if(location.hash==='#nastavitve'){
+   $('connectionSettings').open=true;
+   if(focus)$('sburl').focus();
+ }else if(focus){
+   window.scrollTo(0,0);
+   $(prices?'pricesHeading':'listHeading').focus({preventScroll:true});
+ }
+}
+window.addEventListener('hashchange',()=>showView(true));
+function render(){
+ $('listCount').textContent=items.length;
+ $('listCount').hidden=!items.length;
+ $('priceEmpty').hidden=Boolean(items.length);
+ $('priceSummary').hidden=!items.length;
+ $('priceStores').hidden=!items.length;
+ $('clear').disabled=!items.length;
+ $('refresh').disabled=busy||!items.length;
+ const list=$('list');list.replaceChildren();if(!items.length)list.innerHTML='<p class="muted">Listek je prazen.</p>';
 for(const i of items){const div=document.createElement('div');div.className='line row';div.innerHTML=`<div><b>${esc(i.name)}</b><br><small>${i.qty} ×</small></div><div class="qty"><button class="light" data-act="minus">−</button><b>${i.qty}</b><button class="light" data-act="plus">+</button><button class="delete" data-act="remove">✕</button></div>`;div.querySelector('[data-act=minus]').onclick=()=>modify(i.id,-1);div.querySelector('[data-act=plus]').onclick=()=>modify(i.id,1);div.querySelector('[data-act=remove]').onclick=()=>remove(i.id);list.append(div)}
 const results=STORES.map(calc),complete=results.filter(x=>!x.missing.length&&items.length),confirmed=complete.filter(x=>!x.unverified.length&&!x.discount),winner=[...confirmed].sort((a,b)=>a.total-b.total)[0],infoWinner=[...complete].sort((a,b)=>a.total-b.total)[0];$('winner').textContent=winner?winner.store+' · '+money(winner.total):'—';$('winnerNote').textContent=winner?'Najcenejša popolna košarica s potrjenimi cenami.':'Nobena trgovina nima potrjenih cen za vse izdelke.';let info=$('infoSummary');if(info){info.textContent=(includeUnverified||results.some(r=>r.discount))?(infoWinner?'Informativno najcenejša: '+infoWinner.store+' · '+money(infoWinner.total)+(infoWinner.discount?' (ocena s kuponom)':infoWinner.unverified.length?' (vključuje nepotrjene cene)':''):'Ni popolne informativne košarice.'):'Vklopi informativni način, če želiš vključiti primerljive, vendar nepotrjene ponudbe.'}
 renderStoreNavigation(results);
@@ -400,7 +472,7 @@ manualButton.onclick=()=>{
 };
 card.append(manualButton);
 const bottom=document.createElement('div');bottom.className='total row';bottom.innerHTML=`<span>${r.missing.length?'Delni seštevek':r.discount?'Ocenjeno plačilo s kuponom':r.unverified.length?'Informativni seštevek':'Skupaj'}</span><span>${items.length&&(r.total>0||!r.missing.length)?money(r.total):'Ni podatkov'}</span>`;card.append(bottom);if(r.unverified.length){const caution=document.createElement('p');caution.className='warn';caution.style.fontSize='12px';caution.textContent='Nepotrjene cene: '+r.unverified.join(', ')+'. Preveri v trgovini.';card.append(caution)}if(r.missing.length){const note=document.createElement('p');note.className='warn';note.style.fontSize='12px';note.textContent='Manjka: '+r.missing.join(', ');card.append(note)}root.append(card)} }
-async function search(){if(busy||!items.length)return;const url=localStorage.getItem('cn_sb_url'),key=localStorage.getItem('cn_sb_key');if(!url||!key){$('progress').textContent='Najprej shrani povezavo s Supabase.';return}busy=true;$('refresh').disabled=true;$('progress').textContent='Pridobivam ponudbe …';offers={};alternatives={};upcoming={};failures={};sources={};render();let count=0;
+async function search(){if(busy||!items.length)return;location.hash='cene';showView(true);const url=localStorage.getItem('cn_sb_url'),key=localStorage.getItem('cn_sb_key');if(!url||!key){$('progress').textContent='Najprej shrani povezavo s Supabase.';$('priceSettings').hidden=false;return}$('priceSettings').hidden=true;busy=true;$('refresh').disabled=true;$('progress').textContent='Pridobivam ponudbe …';offers={};alternatives={};upcoming={};failures={};sources={};render();let count=0;
 for(const i of items){try{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),35000);let res;try{res=await fetch(url.replace(/\/$/,'')+'/functions/v1/search-prices',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:i.name}),signal:controller.signal})}finally{clearTimeout(timeout)}if(!res.ok)throw Error('HTTP '+res.status);const j=await res.json();offers[i.id]=Array.isArray(j.offers)?j.offers:[];alternatives[i.id]=Array.isArray(j.alternatives)?j.alternatives:[];upcoming[i.id]=Array.isArray(j.upcoming)?j.upcoming:[];Object.assign(sources,j.sources||{});count+=offers[i.id].length}catch(e){offers[i.id]=[];failures[i.id]=String(e.message||e)}$('progress').textContent='Preverjeno '+(items.indexOf(i)+1)+'/'+items.length+' izdelkov.';render()}
 $('sources').textContent=Object.entries(sources).map(([k,v])=>k+': '+v).join(' | ')||'Viri niso vrnili statusa.';$('progress').textContent=`Prejetih ponudb: ${count}. V seštevek se vključijo le ponudbe s potrjeno veljavnostjo in količino. Ostale lahko pogledaš pod opozorili.`;busy=false;$('refresh').disabled=false;render()}
 function knownPrice(row){
@@ -684,20 +756,26 @@ function rememberProduct(name){
  preferences=[{name,count:(previous?.count||0)+1},...preferences.filter(product=>normalize(product.name)!==key)].slice(0,200);
  writeProfile(preferencesKey,preferences);
 }
+const commonProducts=['Mleko','Trajno mleko 3,5 % 1 l','Sveže mleko','Kruh','Kajzerica','Jajca 10 kos','Maslo 250 g','Grški jogurt 500 g','Poli narezek 150 g','Sir','Čips','Baterije AA','Planinski čaj','Hrenovke','Jabolka','Banane','Krompir','Paradižnik','Pivo','Belo vino','Riž','Testenine','Moka','Kava','Mineralna voda','Sadna kaša','Plenice'];
 function renderSuggestions(){
  const target=$('suggestions'),query=normalize($('newItem').value);
+ const tokens=query.split(/\s+/).filter(Boolean);
  target.replaceChildren();
- if(!query)return;
  const matches=new Map();
- for(const product of [...preferences,...receiptHistory]){
+ const personal=[...preferences,...receiptHistory];
+ for(const product of [...personal,...(query?commonProducts.map(name=>({name})):[])]){
    const key=normalize(product.name);
-   if(key!==query&&key.includes(query)&&!matches.has(key))matches.set(key,product);
+   if(key&&key!==query&&tokens.every(token=>key.includes(token))&&!matches.has(key))matches.set(key,product);
  }
- for(const product of [...matches.values()].sort((a,b)=>(b.count||0)-(a.count||0)).slice(0,5)){
+ const ranked=[...matches.entries()].sort(([a,x],[b,y])=>
+   (y.count||0)-(x.count||0)||Number(b.startsWith(query))-Number(a.startsWith(query)));
+ $('suggestionPanel').hidden=!ranked.length;
+ $('suggestionLabel').textContent=query?'Predlogi':'Pogosto dodano';
+ for(const [,product] of ranked.slice(0,6)){
    const button=document.createElement('button');
    button.type='button';
    button.className='soft';
-   button.textContent=product.name;
+   button.textContent='+ '+product.name;
    button.onclick=()=>{$('newItem').value=product.name;add();$('newItem').focus()};
    target.append(button);
  }
@@ -760,12 +838,8 @@ function initProfiles(){
    input.value='';
    $('newProfile').open=false;
  };
- const suggestions=document.createElement('div');
- suggestions.id='suggestions';
- suggestions.setAttribute('aria-label','Predlogi izdelkov');
- suggestions.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
- $('newItem').closest('.add').after(suggestions);
  $('newItem').addEventListener('input',renderSuggestions);
+ renderSuggestions();
  for(const store of STORES)$('manualStore').add(new Option(store,store));
  $('manualPriceForm').onsubmit=event=>{
    event.preventDefault();
@@ -783,7 +857,9 @@ function initProfiles(){
  };
 }
 initProfiles();
+if(new URLSearchParams(location.search).has('povabilo')||sessionStorage.getItem('cn_pending_shared_invite'))$('sharedTools').open=true;
+showView();
 initReceiptImport();
-$('infoMode').checked=includeUnverified;$('infoMode').onchange=e=>{includeUnverified=e.target.checked;writeProfile(infoKey,includeUnverified);render()};$('addBtn').onclick=add;$('newItem').onkeydown=e=>{if(e.key==='Enter')add()};$('refresh').onclick=search;$('clear').onclick=()=>{if(confirm('Izbrišem celoten listek?')){items=[];offers={};choices={};persist();render()}};
+$('infoMode').checked=includeUnverified;$('infoMode').onchange=e=>{includeUnverified=e.target.checked;writeProfile(infoKey,includeUnverified);render()};$('productForm').onsubmit=event=>{event.preventDefault();add();$('newItem').focus()};$('refresh').onclick=search;$('clear').onclick=()=>{if(confirm('Izbrišem celoten listek?')){items=[];offers={};choices={};persist();render()}};
 $('save').onclick=()=>{const u=$('sburl').value.trim().replace(/\/$/,''),k=$('sbkey').value.trim();if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)||!k){$('configState').textContent='Vnesi pravilen Supabase URL in publishable/anon ključ.';return}localStorage.setItem('cn_sb_url',u);localStorage.setItem('cn_sb_key',k);$('configState').textContent='Povezava je shranjena v tem brskalniku.'};$('sburl').value=localStorage.getItem('cn_sb_url')||'';$('sbkey').value=localStorage.getItem('cn_sb_key')||'';if($('sburl').value)$('configState').textContent='Shranjena povezava je bila naložena.';render();
 </script><script type="module" src="./shared-lists.js"></script></body></html>
