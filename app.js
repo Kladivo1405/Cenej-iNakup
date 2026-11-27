@@ -95,7 +95,14 @@ function offerPresentation(offer){
    if(known)brand=known==='lasko'?'Laško':known==='barcaffe'?'Barcaffè':known[0].toUpperCase()+known.slice(1);
  }
  let title=name,variant="";
- if(/\b(praln\w*|pranje)\b/.test(normalized)){
+ if(offer.detergent_form){
+   title={powder:'Pralni prašek',liquid:'Tekoči detergent',capsules:'Pralne kapsule'}[offer.detergent_form]||name;
+   variant=name
+     .replace(/^(?:detergent za pranje(?:(?: barvnega| občutljivega)? perila)?|pralni prašek)\s*/i,'')
+     .replace(/\d+(?:[.,]\d+)?\s*(?:kg|g|ml|l|pranj)\b/gi,'')
+     .split(/[\s,]+/).filter(word=>word&&!normalize(brand).split(' ').includes(normalize(word)))
+     .join(' ').replace(/^[,.\s/]+|[,.\s/]+$/g,'');
+ }else if(/\b(praln\w*|pranje)\b/.test(normalized)){
    if(/\b(prasek|prah)\b/.test(normalized))title='Pralni prašek';
    else if(/\b(gel|tekoc\w*)\b/.test(normalized))title='Gel za pranje';
    else if(/\bkapsul\w*\b/.test(normalized))title='Kapsule za pranje';
@@ -250,7 +257,7 @@ function productCard(item,store,offer,current){
    info.append(standard);
  }
  const reason=offer.substitution_reason||(!isComparable(item,offer)?'Drugačno ali neznano pakiranje':'');
- const hints=[reason,effective?.price_status==='unverified'?'Nepotrjena cena':'',offer.coupon_condition||''].filter(Boolean);
+ const hints=[reason,effective?.price_status==='unverified'?'Nepotrjena cena':'',offer.promotion_note||'',offer.coupon_condition||''].filter(Boolean);
  if(hints.length){
    const detail=document.createElement('small');
    detail.className='offer-note';
@@ -383,7 +390,7 @@ function renderUpcoming(item,store,line){
  return true;
 }
 
-function candidates(item,store){return (offers[item.id]||[]).filter(o=>storeOf(o)===store&&numericPrice(o)!==null).slice(0,12)}
+function candidates(item,store){return (offers[item.id]||[]).filter(o=>storeOf(o)===store&&numericPrice(o)!==null)}
 function options(item,store){return liveMatches(item,store).map(offer=>offerForQuantity(offer,item)).filter(o=>o&&canUsePrice(o)).sort((a,b)=>numericPrice(a)-numericPrice(b))}
 function legacyChoiceKey(item,store){return item.id+'|'+store}
 function choiceKey(item,store){return 'query|'+store+'|'+item.name.trim().toLowerCase().replace(/\s+/g,' ')}
@@ -722,7 +729,7 @@ manualButton.onclick=()=>{
 card.append(manualButton);
 const bottom=document.createElement('div');bottom.className='total row';bottom.innerHTML=`<span>${r.missing.length?'Delni seštevek':r.discount?'Ocenjeno plačilo s kuponom':r.unverified.length?'Informativni seštevek':'Skupaj'}</span><span>${pending.length&&(r.total>0||!r.missing.length)?money(r.total):'Ni podatkov'}</span>`;card.append(bottom);if(r.unverified.length){const caution=document.createElement('p');caution.className='warn';caution.style.fontSize='12px';caution.textContent='Nepotrjene cene: '+r.unverified.join(', ')+'. Preveri v trgovini.';card.append(caution)}if(r.missing.length){const note=document.createElement('p');note.className='warn';note.style.fontSize='12px';note.textContent='Manjka: '+r.missing.join(', ');card.append(note)}root.append(card)} }
 async function search(){const requested=pendingItems();if(busy||!requested.length)return;location.hash='cene';showView(true);const url=localStorage.getItem('cn_sb_url'),key=localStorage.getItem('cn_sb_key');if(!url||!isPublicSupabaseKey(key||'')){$('progress').textContent='Najprej shrani povezavo s Supabase.';$('priceSettings').hidden=false;return}$('priceSettings').hidden=true;busy=true;$('refresh').disabled=true;$('progress').textContent='Pridobivam ponudbe …';offers={};alternatives={};upcoming={};failures={};sources={};render();let count=0;
-for(const [index,i] of requested.entries()){try{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),35000);let res;try{res=await fetch(url.replace(/\/$/,'')+'/functions/v1/search-prices',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:i.name}),signal:controller.signal})}finally{clearTimeout(timeout)}if(!res.ok)throw Error('HTTP '+res.status);const j=await res.json();offers[i.id]=Array.isArray(j.offers)?j.offers:[];alternatives[i.id]=Array.isArray(j.alternatives)?j.alternatives:[];upcoming[i.id]=Array.isArray(j.upcoming)?j.upcoming:[];Object.assign(sources,j.sources||{});count+=offers[i.id].length}catch(e){offers[i.id]=[];failures[i.id]=String(e.message||e)}$('progress').textContent='Preverjeno '+(index+1)+'/'+requested.length+' izdelkov.';render()}
+for(const [index,i] of requested.entries()){try{const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),35000);let res;try{res=await fetch(url.replace(/\/$/,'')+'/functions/v1/search-prices',{method:'POST',headers:{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key},body:JSON.stringify({query:i.name}),signal:controller.signal})}finally{clearTimeout(timeout)}if(!res.ok)throw Error('HTTP '+res.status);const j=await res.json();offers[i.id]=Array.isArray(j.offers)?j.offers:[];alternatives[i.id]=Array.isArray(j.alternatives)?j.alternatives:[];upcoming[i.id]=Array.isArray(j.upcoming)?j.upcoming:[];Object.assign(sources,j.sources||{});count+=offers[i.id].length+alternatives[i.id].length}catch(e){offers[i.id]=[];failures[i.id]=String(e.message||e)}$('progress').textContent='Preverjeno '+(index+1)+'/'+requested.length+' izdelkov.';render()}
 $('sources').textContent=Object.entries(sources).map(([k,v])=>k+': '+v).join(' | ')||'Viri niso vrnili statusa.';$('progress').textContent=`Prejetih ponudb: ${count}. V seštevek se vključijo le ponudbe s potrjeno veljavnostjo in količino. Ostale lahko pogledaš pod opozorili.`;busy=false;$('refresh').disabled=false;render()}
 function knownPrice(row){
  return {...row,lastKnown:true,price_status:'unverified',eligible_for_basket:false};

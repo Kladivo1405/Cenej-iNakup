@@ -97,7 +97,8 @@ function productType(text:string):string|null {
  }
  if(/\bpoli\b/.test(n)&&/\b(narez\w*|salam\w*|rezinah|pecenica)\b/.test(n))return "poli";
  if(/\b(pivo|beer|bier)\b/.test(n))return "beer";
- if(/\bpraln\w*\b.*\b(prasek|prah|gel|tekoc\w*|kapsul\w*|detergent)\b|\b(prasek|gel|tekoc\w*|kapsul\w*)\b.*\bza pranje\b/.test(n))return "laundry";
+ if(/\b(praln\w*\b.*\b(?:prask\w*|prasek|prah|gel|tekoc\w*|kapsul\w*|detergent\w*)|(?:detergent\w*|prask\w*|prasek|prah|gel|kapsul\w*)\b.*\b(?:za pranje|za perilo))\b/.test(n)&&
+   !/\b(mehcal\w*|posod\w*|cistil\w* za pralni stroj|lovil\w* barv|odstranjeval\w* madezev)\b/.test(n))return "laundry";
  if(/\b(jajca|jajce|eggs)\b/.test(n))return "eggs";
  return null;
 }
@@ -109,10 +110,16 @@ function poliForm(text:string){
 }
 function detergentForm(text:string){
  const n=norm(text);
- if(/\b(prasek|prah)\b/.test(n))return "powder";
+ if(/\b(kapsul\w*|pods|discs)\b/.test(n))return "capsules";
  if(/\b(gel|tekoc\w*)\b/.test(n))return "liquid";
- if(/\b(kapsul\w*|pods)\b/.test(n))return "capsules";
- return null;
+ if(/\b(prask\w*|prasek|prah)\b/.test(n))return "powder";
+ if(productType(text)!=="laundry")return null;
+ const unit=parseQuantity(text)?.unit;
+ return unit==="l"?"liquid":unit==="kg"?"powder":null;
+}
+const laundryWords=/^(praln\w*|pranje|peril\w*|pranj|prask\w*|prasek|prah|gel|tekoc\w*|kapsul\w*|pods|discs|detergent\w*)$/;
+function laundryTerms(query:string){
+ return searchWords(query).filter(word=>!laundryWords.test(word));
 }
 function attributes(text:string){const n=norm(text);return {
  lactoseFree:/brez laktoze|lactose free|laktosefrei/.test(n),
@@ -189,7 +196,7 @@ function queryMatches(q:string,name:string,description="",weight="",brand=""):bo
    const categoryWords:Record<string,RegExp>={
      poli:/^(poli|narez\w*|salam\w*|rezin\w*|kosu)$/,
      beer:/^(pivo|beer|bier)$/,
-     laundry:/^(praln\w*|pranje|prasek|prah|gel|tekoc\w*|kapsul\w*|detergent)$/,
+     laundry:laundryWords,
      butter:/^(maslo|butter)$/,
      "butter-spread":/^(maslen\w*|namaz|maslo)$/,
    };
@@ -647,6 +654,70 @@ function mercatorDetail(html:string,url:string,q:string){
   const product=structuredProducts(html)[0];
  return makeOffer({store:"Mercator",name,brand:product?.brand,price:price.replace(",","."),image:product?.image??pageImage(html),url,source:url});
 }
+const mercatorOnline="https://mercatoronline.si";
+
+function mercatorLaundryOffer(row:any){
+  const data=row?.data;
+  const name=typeof data?.name==="string"?plainText(data.name):"";
+  const path=typeof row?.url==="string"?row.url:"";
+  if(row?.type!=="product"||productType(name)!=="laundry"||!/^\/izdelek\/\d+\/[a-z0-9-]+\/?$/.test(path))return null;
+  const url=mercatorOnline+path;
+  const normal=Number(data.normal_price),current=Number(data.current_price);
+  if(!(current>0&&Number.isFinite(current)))return null;
+  // A search price may be personalized. Only a dated public markdown can override the normal price.
+  const today=slovenianDay.format(new Date()).replaceAll("-","");
+  const discounts=Array.isArray(data.discounts)?data.discounts:[];
+  const validDiscount=(entry:any)=>entry?.group_type==="other"&&!entry.coupon&&!entry.clubs&&!entry.clubs_array&&
+    /^\d{14}$/.test(entry.valid_from)&&/^\d{14}$/.test(entry.valid_to)&&
+    entry.valid_from.slice(0,8)<=today&&today<=entry.valid_to.slice(0,8);
+  const markdown=discounts.find((entry:any)=>validDiscount(entry)&&entry.marker_code==="11"&&
+    Number(entry.discount_price)===current&&current<normal);
+  const bulk=discounts.find((entry:any)=>validDiscount(entry)&&entry.marker_code==="100"&&
+    typeof entry.hover_text==="string"&&/ob nakupu \d+ izdelkov ali več/i.test(entry.hover_text));
+  const offer=makeOffer({
+    store:"Mercator",name,brand:data.brand_name,price:markdown||!Number.isFinite(normal)||normal<=0?current:normal,
+    regularPrice:normal,priceValidUntil:markdown?.valid_to.replace(/^(\d{4})(\d{2})(\d{2}).*$/,"$1-$2-$3"),
+    promotion:Boolean(markdown),image:row.mainImageSrc,url,source:mercatorOnline+"/brskaj"
+  });
+  return offer&&{...offer,url,detergent_form:detergentForm(name),promotion_note:bulk?plainText(bulk.hover_text):null};
+}
+
+async function searchMercatorLaundry(query:string){
+  // This is the public product grid used by Mercator's own search. Fetch one desktop-sized page.
+  const required=laundryTerms(query);
+  const form=detergentForm(query);
+  const general=["detergent za pranje perila",...required].join(" ");
+  const term=form==="powder"?["pralni prašek",...required].join(" "):
+    form==="capsules"?["pralne kapsule",...required].join(" "):general;
+  const endpoint=mercatorOnline+"/products/browseProducts/getProducts";
+  const load=async(search:string)=>{
+    const parameters=new URLSearchParams({limit:"100",offset:"0",from:"0","filterData[search]":search});
+    const response=await fetchPublic(endpoint+"?"+parameters,{"X-Requested-With":"XMLHttpRequest"});
+    if(!response.ok)throw new Error("Mercator HTTP "+response.status);
+    const data=await response.json();
+    if(!Array.isArray(data?.products))throw new Error("Mercator: neprepoznan izpis iskanja");
+    const offers=new Map<string,NonNullable<ReturnType<typeof mercatorLaundryOffer>>>();
+    for(const row of data.products.slice(0,100)){
+      const offer=mercatorLaundryOffer(row);
+      if(!offer)continue;
+      const words=new Set(norm(offer.name+" "+(offer.brand??"")).split(" "));
+      if(required.every(word=>words.has(word)))offers.set(offer.url,offer);
+    }
+    return [...offers.values()];
+  };
+  const rows=await load(term||query);
+  return rows.length||term===general?rows:await load(general);
+}
+
+function laundrySubstitute(query:string,offer:NonNullable<ReturnType<typeof mercatorLaundryOffer>>){
+  const requested=detergentForm(query);
+  const form=offer.detergent_form;
+  const reason=requested!==form&&requested?
+    (form==="powder"?"Pralni prašek":form==="liquid"?"Tekoči detergent":form==="capsules"?"Pralne kapsule":"Oblika ni navedena"):
+    "Drugačno ali neznano pakiranje";
+  return {...offer,eligible_for_basket:false,substitution_reason:reason,match_score:requested===form?90:70};
+}
+
 function discoveryTerms(q:string){
   const kind=productType(q);
   if(greekYogurt(q))return ["jogurt"];
@@ -751,7 +822,7 @@ function typeSubstitution(query:string){
    rank:(offer:any)=>productType(offer.name)===(kind==="butter"?"butter-spread":"butter")?0.45:Infinity
  };
  if(kind==="laundry"&&detergentForm(query))return {
-   query:"pralni detergent "+searchWords(query).filter(word=>!["pralni","prasek","prah","gel","tekoci","kapsule","pranje"].includes(word)).join(" "),reason:"Druga oblika detergenta",
+   query:["pralni detergent",...laundryTerms(query)].join(" "),reason:"Druga oblika detergenta",
    rank:(offer:any)=>productType(offer.name)==="laundry"&&detergentForm(offer.name)&&detergentForm(offer.name)!==detergentForm(query)?0.45:Infinity
  };
  return null;
@@ -984,6 +1055,17 @@ async function handleSearch(req:Request){
   const jobs=[["Tuš",searchTus],["Eurospin",searchEurospin],["Lidl",(term:string)=>searchSitemap("Lidl",term)],["Hofer",(term:string)=>searchSitemap("Hofer",term)],["Spar",(term:string)=>searchRetailer("Spar",term)],["Mercator",(term:string)=>searchRetailer("Mercator",term)]] as const;
   await Promise.all(jobs.map(async ([store,search])=>{
     try{
+      if(store==="Mercator"&&productType(q)==="laundry"){
+        const catalog=await searchMercatorLaundry(q).catch(()=>null);
+        if(catalog?.length){
+          for(const offer of catalog){
+            if(queryMatches(q,offer.name,"",offer.unit??"",offer.brand??""))offers.push(applyBasketEligibility(offer,q));
+            else alternatives.push(laundrySubstitute(q,offer));
+          }
+          sources[store]=catalog.length+" ponudb iz spletnega iskanja";
+          return;
+        }
+      }
       const findAlternatives=async(rule:NonNullable<ReturnType<typeof packageSubstitution>>)=>{
         const result=(store==="Spar"||store==="Mercator")&&greekYogurt(q)
           ?await searchRetailer(store,rule.query,parseQuantity(q)):await search(rule.query);
