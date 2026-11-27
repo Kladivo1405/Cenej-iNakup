@@ -71,7 +71,10 @@ Deno.serve(async (req) => {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return json({error: "Branje z AI še ni nastavljeno."}, 503);
   try {
-    const auth = await fetch(Deno.env.get("SUPABASE_URL") + "/auth/v1/user", {
+    const project = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!project || !serviceKey) return json({error: "Omejitev branja z AI še ni nastavljena."}, 503);
+    const auth = await fetch(project + "/auth/v1/user", {
       headers: {
         Authorization: req.headers.get("authorization")!,
         apikey: Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -79,9 +82,30 @@ Deno.serve(async (req) => {
       signal: AbortSignal.timeout(5000),
     });
     if (!auth.ok) return json({error: "Prijava je potrebna."}, 401);
+    const user = await auth.json();
+    if (typeof user.id !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(user.id)) {
+      return json({error: "Prijava je potrebna."}, 401);
+    }
     const bytes = await imageBytes(req);
     if (!bytes || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
       return json({error: "Slika JPEG manjka ali presega 3 MB."}, 400);
+    }
+    const quota = await fetch(project + "/rest/v1/rpc/reserve_receipt_read", {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: "Bearer " + serviceKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({caller: user.id}),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!quota.ok) {
+      console.warn("Receipt quota check failed", {status: quota.status});
+      return json({error: "Omejitve branja z AI trenutno ni mogoče preveriti."}, 503);
+    }
+    if (await quota.json() !== true) {
+      return json({error: "Dosežena je dnevna omejitev branja z AI. Poskusi po polnoči."}, 429);
     }
     let binary = "";
     for (let offset = 0; offset < bytes.length; offset += 8192) {
@@ -112,7 +136,7 @@ Deno.serve(async (req) => {
       const safeCode = typeof code === "string" && /^[a-z0-9_]{1,64}$/.test(code) ? code : undefined;
       console.warn("OpenAI receipt request failed", {status: response.status, code: safeCode});
       const error = response.status === 401 ? "OpenAI je zavrnil ključ API."
-        : safeCode === "insufficient_quota" ? "OpenAI API nima razpoložljive kvote. Preveri obračun."
+        : ["insufficient_quota", "credit_balance_exhausted"].includes(safeCode ?? "") ? "OpenAI API nima razpoložljive kvote. Preveri obračun."
         : response.status === 429 ? "OpenAI je začasno omejil število zahtev."
         : "OpenAI ni obdelal zahteve (HTTP " + response.status + ").";
       return json({error}, 502);
