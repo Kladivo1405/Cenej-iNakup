@@ -491,7 +491,8 @@ const CATEGORY_PAGES=[
   {words:/\b(jabolka|banane|krompir|cebula|solata)\b/,lidl:"/h/sadje-in-zelenjava/h10071012",hofer:"/izdelki/sadje-in-zelenjava/k/1588161418378150"},
 ] as const;
 type LidlPlusPrice={price:number;from:string;until:string;coupon_required:boolean;percent?:number;previous_price?:number};
-type LidlOffer=NonNullable<ReturnType<typeof makeOffer>>&{
+type PriceOffer=NonNullable<ReturnType<typeof makeOffer>>&{substitution_reason?:string};
+type LidlOffer=PriceOffer&{
   lidl_plus?:LidlPlusPrice; lidl_plus_only?:boolean;
   lidl_catalogue_match?:boolean;
   lidl_variant?:string; lidl_discount_percent?:number; promotion_note?:string;
@@ -614,11 +615,16 @@ function lidlCategories(q:string){
   const category=CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.lidl;
   return category?[category]:[];
 }
-// This entry is printed on page 24 but has no product tile in Lidl's public listing.
+// These verified offers are printed in the leaflet without a public product tile.
 const lidlPrintedOffers=[{
   name:"Zobna pasta Complete Protection",brand:"Sensodyne",weight:"75 ml",price:4.65,
   from:"2026-11-26",until:"2026-12-02",
   source:lidlBase+"/l/sl/katalog/lidlov-katalog-2026-kw48/view/flyer/page/24"
+},{
+  name:"Nutella",brand:"Ferrero",weight:"1 kg",price:7.19,
+  from:"2026-11-26",until:"2026-12-02",
+  source:lidlBase+"/l/sl/katalog/lidlov-katalog-2026-kw48/view/flyer/page/1",
+  promotionNote:"34 % gratis",choosePack:true
 }];
 function lidlPrintedMatches(q:string){
   const day=slovenianDay.format(new Date());
@@ -626,8 +632,11 @@ function lidlPrintedMatches(q:string){
   return lidlPrintedOffers.flatMap(row=>{
     if(day<row.from||day>row.until||!lidlProductMatches(q,row.name,"",row.weight,row.brand)||
       requested&&!sameQuantity(requested,parseQuantity(row.weight)))return [];
-    const offer=makeOffer({...row,store:"Lidl",url:row.source,priceValidUntil:row.until});
-    return offer?[{...offer,lidl_catalogue_match:true}]:[];
+    const offer=makeOffer({...row,store:"Lidl",url:row.source,priceValidUntil:row.until,promotion:Boolean(row.promotionNote)});
+    if(!offer)return [];
+    const choosePack=row.choosePack&&!requested;
+    return [{...offer,lidl_catalogue_match:!choosePack,promotion_note:row.promotionNote,
+      ...(choosePack?{substitution_reason:"Izbirno pakiranje "+row.weight}:{})}];
   });
 }
 async function searchLidlListings(q:string,upcoming=false){
@@ -1125,7 +1134,7 @@ function packageSubstitution(query:string){
    if(!size||size.unit!==target.unit||sameQuantity(target,size))return Infinity;
    if(eggs&&/\b(?:testenine|rezanci|namaz|sendvic|pecivo)\b/.test(norm(offer.name)))return Infinity;
    const difference=Math.abs(size.amount-target.amount)/target.amount;
-   if(!eggs&&difference>0.35&&!(offer.store==="Lidl"&&lidlAlias(query)))return Infinity;
+   if(!eggs&&difference>0.35&&!(offer.store==="Lidl"&&(lidlAlias(query)||offer.substitution_reason)))return Infinity;
    return difference+(size.count!==target.count?0.1:0);
  }};
 }
@@ -1366,10 +1375,11 @@ async function handleSearch(req:Request){
       const similarSearch=Promise.allSettled([packaging,typeSubstitution(q),...laundrySubstitutions(q),store==="Tuš"?battery:null]
         .filter(rule=>rule!==null).map(findAlternatives));
       const [current]=await Promise.allSettled([search(q)]);
-      const rows=current.status==="fulfilled"?current.value.filter(row=>row.price_status!=="expired"):[];
-      offers.push(...rows.map(row=>applyBasketEligibility(row,q)));
+      const rows:PriceOffer[]=current.status==="fulfilled"?current.value.filter(row=>row.price_status!=="expired"):[];
+      const matches=rows.filter(row=>!row.substitution_reason);
+      offers.push(...matches.map(row=>applyBasketEligibility(row,q)));
       sources[store]=current.status==="fulfilled"?rows.length+" ustreznih ponudb":"ni podatka: "+String(current.reason).slice(0,150);
-      const exact=rows.filter(row=>!row.coupon_condition);
+      const exact=matches.filter(row=>!row.coupon_condition);
       const [internal,other]=await Promise.all([
         similarSearch,
         Promise.allSettled(!exact.length&&substitute?[findAlternatives(substitute)]:[]),
@@ -1377,6 +1387,11 @@ async function handleSearch(req:Request){
       const alternativesById=new Map<string,any>();
       const identity=(offer:any)=>offer.url+"|"+norm(offer.name)+"|"+(offer.unit??"");
       const exactIds=new Set(exact.map(identity));
+      for(const offer of rows){
+        if(offer.substitution_reason&&!exactIds.has(identity(offer))){
+          alternativesById.set(identity(offer),{offer,rank:0.1,reason:offer.substitution_reason});
+        }
+      }
       for(const result of [...internal,...other])if(result.status==="fulfilled")for(const entry of result.value){
         const key=identity(entry.offer);
         if(exactIds.has(key))continue;
