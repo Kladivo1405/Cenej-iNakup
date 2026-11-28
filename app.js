@@ -98,9 +98,9 @@ function offerPresentation(offer){
  if(offer.detergent_form){
    title={powder:'Pralni prašek',liquid:'Tekoči detergent',capsules:'Pralne kapsule'}[offer.detergent_form]||name;
    variant=name
-     .replace(/^(?:detergent za pranje(?:(?: barvnega| občutljivega)? perila)?|pralni prašek)\s*/i,'')
+     .replace(/^(?:detergent(?: za pranje(?:(?: barvnega| občutljivega)? perila)?)?|pralni prašek)\s*/i,'')
      .replace(/\d+(?:[.,]\d+)?\s*(?:kg|g|ml|l|pranj)\b/gi,'')
-     .split(/[\s,]+/).filter(word=>word&&!normalize(brand).split(' ').includes(normalize(word)))
+     .split(/[\s,]+/).filter(word=>word&&!normalize(brand).split(' ').includes(normalize(word))&&!/^(tekoci|gel|kapsule|prah)$/.test(normalize(word)))
      .join(' ').replace(/^[,.\s/]+|[,.\s/]+$/g,'');
  }else if(/\b(praln\w*|pranje)\b/.test(normalized)){
    if(/\b(prasek|prah)\b/.test(normalized))title='Pralni prašek';
@@ -284,7 +284,7 @@ function productCard(item,store,offer,current){
    info.append(standard);
  }
  const reason=offer.substitution_reason||(!isComparable(item,offer)?'Drugačno ali neznano pakiranje':'');
- const hints=[reason,effective?.price_status==='unverified'?'Nepotrjena cena':'',offer.promotion_note||'',offer.coupon_condition||''].filter(Boolean);
+ const hints=[reason===title?'':reason,effective?.price_status==='unverified'?'Nepotrjena cena':'',offer.promotion_note||'',offer.coupon_condition||''].filter(Boolean);
  if(hints.length){
    const detail=document.createElement('small');
    detail.className='offer-note';
