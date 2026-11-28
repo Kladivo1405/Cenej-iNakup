@@ -97,8 +97,9 @@ function productType(text:string):string|null {
  }
  if(/\bpoli\b/.test(n)&&/\b(narez\w*|salam\w*|rezinah|pecenica)\b/.test(n))return "poli";
  if(/\b(pivo|beer|bier)\b/.test(n))return "beer";
- if(/\b(praln\w*\b.*\b(?:prask\w*|prasek|prah|gel|tekoc\w*|kapsul\w*|detergent\w*)|(?:detergent\w*|prask\w*|prasek|prah|gel|kapsul\w*)\b.*\b(?:za pranje|za perilo))\b/.test(n)&&
-   !/\b(mehcal\w*|posod\w*|cistil\w* za pralni stroj|lovil\w* barv|odstranjeval\w* madezev)\b/.test(n))return "laundry";
+ const laundry=/\b(?:praln\w*\b.*\b(?:prask\w*|prasek|prah|gel|tekoc\w*|kapsul\w*|detergent\w*)|(?:detergent\w*|prask\w*|prasek|prah|gel|kapsul\w*)\b.*\b(?:za (?:strojno |rocno )?pranje|za (?:\w+ )?perilo|pranj\w*|tkanin\w*))\b/.test(n)||
+   /\btekoc\w* detergent\w*\b/.test(n);
+ if(laundry&&!/\b(mehcal\w*|posod\w*|pomivan\w*|cistil\w* za pralni stroj|lovil\w* barv|odstranjeval\w* madezev|wc|ciscenj\w* kopalnic)\b/.test(n))return "laundry";
  if(/\b(jajca|jajce|eggs)\b/.test(n))return "eggs";
  return null;
 }
@@ -108,16 +109,16 @@ function poliForm(text:string){
  if(/\b(salam\w*|kosu)\b/.test(n))return "whole";
  return null;
 }
-function detergentForm(text:string){
+function detergentForm(text:string,packaging=""){
  const n=norm(text);
  if(/\b(kapsul\w*|pods|discs)\b/.test(n))return "capsules";
- if(/\b(gel|tekoc\w*)\b/.test(n))return "liquid";
- if(/\b(prask\w*|prasek|prah)\b/.test(n))return "powder";
+ if(/\b(gel|tekoc\w*|liquid)\b/.test(n))return "liquid";
+ if(/\b(prask\w*|prasek|prah\w*|powder)\b/.test(n))return "powder";
  if(productType(text)!=="laundry")return null;
- const unit=parseQuantity(text)?.unit;
+ const unit=(parseQuantity(text)??parseQuantity(packaging))?.unit;
  return unit==="l"?"liquid":unit==="kg"?"powder":null;
 }
-const laundryWords=/^(praln\w*|pranje|peril\w*|pranj|prask\w*|prasek|prah|gel|tekoc\w*|kapsul\w*|pods|discs|detergent\w*)$/;
+const laundryWords=/^(praln\w*|pranje|strojno|rocno|peril\w*|pranj|prask\w*|prasek|prah\w*|powder|gel|liquid|tekoc\w*|kapsul\w*|pods|discs|detergent\w*)$/;
 function laundryTerms(query:string){
  return searchWords(query).filter(word=>!laundryWords.test(word));
 }
@@ -175,7 +176,7 @@ function queryMatches(q:string,name:string,description="",weight="",brand=""):bo
  if(/mleko za telo|losjon|lotion|milo|lonec|robcki|kopel|sampon|balzam|krema|kozmet/.test(title))return false;
  const qt=productType(q),nt=productType(name);if(qt&&nt!==qt)return false;
  if(qt==="poli"&&poliForm(q)&&poliForm(name)!==poliForm(q))return false;
- if(qt==="laundry"&&detergentForm(q)&&detergentForm(name)!==detergentForm(q))return false;
+ if(qt==="laundry"&&detergentForm(q)&&detergentForm(name,weight||description)!==detergentForm(q))return false;
  if(qt==="eggs"&&((eggSize(q)&&eggSize(name)!==eggSize(q))||(rearing(q)&&rearing(combined)!==rearing(q))))return false;
  if(/\bplenice\b/.test(norm(q))&&diaperSize(q)&&diaperSize(name)!==diaperSize(q))return false;
  if(qt==="milk"){
@@ -240,6 +241,7 @@ function makeOffer(input:any){
   return {store:input.store,name,brand:brandName(input.brand)??(productType(name)==="poli"?"Poli":null),price,
     unit:quantity?.label??null,unit_price:quantity?price/quantity.amount:null,unit_measure:quantity?.unit??null,
     wash_count:washCount?Number(washCount):null,image_url:imageUrl(input.image,input.url),
+    ...(productType(name)==="laundry"?{detergent_form:detergentForm(name,quantity?.label??"")}:{}),
     regular_price:Number.isFinite(regular)&&regular>price?regular:null,promotion,
     minimum_quantity:promotion&&Number.isSafeInteger(input.minimumQuantity)&&input.minimumQuantity>1?input.minimumQuantity:null,
     price_valid_until:valid.date,price_status:valid.status,coupon_condition:input.couponCondition as string|undefined,
@@ -251,13 +253,70 @@ function applyBasketEligibility(offer:any,query:string,description=""){
   return offer;
 }
 const TUS_PRODUCT_URL=/^https:\/\/www\.tus\.si\/izdelki\/[a-z0-9-]+\/$/;
+type TusCard={url:string;name:string;image:string|null;price:number|null;brand:string|null;source:string};
+
+function tusPhoto(input:any,url:string){
+ const candidates=Array.isArray(input)?input:[input];
+ for(const candidate of candidates){
+   const found=imageUrl(candidate,url);
+   if(found&&new URL(found).origin===SOURCES.tus.base&&new URL(found).pathname.startsWith("/app/images/"))return found;
+ }
+ return null;
+}
+function tusProductPhoto(html:string,product:any,url:string){
+ const gallery=[...html.matchAll(/<a\b[^>]*class=["'][^"']*\brsImg\b[^"']*["'][^>]*>/gi)]
+   .map(match=>match[0].match(/\bdata-rsBigImg=["']([^"']+)["']/i)?.[1]??match[0].match(/\bhref=["']([^"']+)["']/i)?.[1]);
+ return tusPhoto(product.image,url)??tusPhoto(gallery,url);
+}
+function tusCards(html:string,source:string):TusCard[]{
+ const cards:TusCard[]=[];
+ for(const entry of html.matchAll(/<li\b[^>]*class="[^"]*\btype-product\b[^"]*\binstock\b[^"]*"[^>]*>([\s\S]*?)<\/li>/gi)){
+   const card=entry[1];
+   const heading=card.match(/<h3[^>]*>\s*<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h3>/i);
+   const url=heading&&decodeHtml(heading[1]);
+   if(!url||!TUS_PRODUCT_URL.test(url))continue;
+   const name=plainText(heading[2]);
+   const sku=card.match(/\bdata-product-ean="(\d+)"/)?.[1];
+   const images=[...card.matchAll(/<img\b[^>]*\b(?:data-src|src)="([^"]+)"/gi)].map(match=>match[1]);
+   const image=sku?tusPhoto(images.filter(src=>src.includes("/"+sku+".")),url):tusPhoto(images,url);
+   const priceText=card.match(/<p\b[^>]*class="[^"]*\bprice-regular-desktop\b[^"]*"[^>]*>([\s\S]*?)<\/p>/i)?.[1];
+   const regular=plainText(priceText??"").match(/Redna cena:\s*(\d+[,.]\d{2})\s*€/i)?.[1];
+   const discounted=/\b(?:sale|price-regular|discount|m10-activate)\b/i.test(entry[0].slice(0,entry[0].indexOf(">"))+" "+card);
+   const visible=plainText(card.match(/<span\b[^>]*class="price"[^>]*>([\s\S]*?)<\/span>/i)?.[1]??"").match(/^(\d+[,.]\d{2})\s*€$/)?.[1];
+   const amount=regular??(discounted?null:visible);
+   const brand=card.match(/\bdata-gtm4wp_product_brand="([^"]+)"/)?.[1]??null;
+   cards.push({url,name,image,price:amount?Number(amount.replace(",",".")):null,brand,source});
+ }
+ return cards;
+}
+const tusLaundryCategory=SOURCES.tus.base+"/kategorija/pranje-perila/";
+let tusLaundryCache:{until:number;cards:Promise<TusCard[]>}|null=null;
+function tusLaundryCards(){
+ if(tusLaundryCache&&tusLaundryCache.until>Date.now())return tusLaundryCache.cards;
+ const cards=(async()=>{
+   const response=await fetchPublic(tusLaundryCategory);
+   if(!response.ok)throw new Error("Tuš: kategorija za pranje perila ni dosegljiva");
+   const html=await response.text();
+   const extra=[...new Set([...html.matchAll(/href="(https:\/\/www\.tus\.si\/kategorija\/pranje-perila\/page\/[2-9]\/)"/g)]
+     .map(link=>link[1]))].slice(0,3);
+   const additional=await Promise.allSettled(extra.map(async url=>{
+     const page=await fetchPublic(url);
+     return page.ok?tusCards(await page.text(),url):[];
+   }));
+   return [...tusCards(html,tusLaundryCategory),...additional.flatMap(page=>page.status==="fulfilled"?page.value:[])];
+ })();
+ tusLaundryCache={until:Date.now()+5*60*1000,cards};
+ return cards.catch(error=>{tusLaundryCache=null;throw error;});
+}
+
 async function tusStoreLinks(terms:string[]){
  const url=SOURCES.tus.base+"/trgovina/?"+new URLSearchParams({s:terms.join(" "),post_type:"product"});
  const response=await fetchPublic(url);
  if(!response.ok)throw new Error("Tuševa trgovina HTTP "+response.status);
  const html=await response.text();
- return [...new Set([...html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["']/gi)]
+ const links=[...new Set([...html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["']/gi)]
    .map(match=>decodeHtml(match[1])).filter(link=>TUS_PRODUCT_URL.test(link)))];
+ return {links,cards:tusCards(html,url)};
 }
 async function tusApiLinks(q:string,term:string){
  const url=SOURCES.tus.base+SOURCES.tus.endpoint+"?"+new URLSearchParams({search:term,per_page:"50"});
@@ -271,7 +330,7 @@ async function tusApiLinks(q:string,term:string){
    const description=plainText(p.description??p.short_description??"");
    return (!quantity||sameQuantity(quantity,packageQuantity(p.name)))&&
      (productType(q)==="milk"?productType(p.name)==="milk":queryMatches(q,decodeHtml(p.name),description,"",brandName(p.brands)??""));
- }).map(p=>p.permalink as string);
+ }).map(p=>({url:p.permalink as string,image:tusPhoto(p.images,p.permalink)}));
 }
 function tusProductPricing(html:string,price:number|null){
   const current=html.match(/<p class="price-discounted"[^>]*>([\s\S]*?)<\/p>/i)?.[1]??"";
@@ -295,15 +354,26 @@ function tusProductPricing(html:string,price:number|null){
 async function searchTus(q:string){
  const terms=discoveryTerms(q);
  if(!terms.length)return [];
- const [store,api]=await Promise.allSettled([tusStoreLinks(terms),tusApiLinks(q,terms[0])]);
- if(store.status==="rejected"&&api.status==="rejected")throw store.reason;
- const urls=new Set(api.status==="fulfilled"?api.value:[]);
- if(store.status==="fulfilled"){
-   const ranked=store.value.map(url=>({url,rank:candidateRank(new URL(url).pathname.replace(/\/$/,""),q,terms)}))
-     .filter(item=>item.rank>0).sort((a,b)=>b.rank-a.rank);
-   for(const {url} of ranked.slice(0,12))urls.add(url);
- }
- return await searchProductPages("Tuš",[...urls],(html,url)=>{
+ const [store,api,category]=await Promise.allSettled([
+   tusStoreLinks(terms),tusApiLinks(q,terms[0]),productType(q)==="laundry"?tusLaundryCards():Promise.resolve([])
+ ]);
+ if(store.status==="rejected"&&api.status==="rejected"&&(category.status==="rejected"||!category.value.length))throw store.reason;
+ const catalog=category.status==="fulfilled"?category.value.filter(card=>queryMatches(q,card.name,"","",card.brand??"")):[];
+ const photos=new Map<string,string>();
+ for(const row of [
+   ...(api.status==="fulfilled"?api.value:[]),...(store.status==="fulfilled"?store.value.cards:[]),...catalog
+ ])if(row.image)photos.set(row.url,row.image);
+ const urls=new Set(api.status==="fulfilled"?api.value.map(row=>row.url):[]);
+ const fromStore=store.status==="fulfilled"?store.value.links:[];
+ const ranked=fromStore.map(url=>({url,rank:candidateRank(new URL(url).pathname.replace(/\/$/,""),q,terms)}))
+   .filter(item=>item.rank>0).sort((a,b)=>b.rank-a.rank);
+ for(const {url} of ranked)urls.add(url);
+ for(const card of catalog)urls.add(card.url);
+ const listed=new Map(catalog.flatMap(card=>{
+   const offer=makeOffer({store:"Tuš",...card});
+   return offer?[[card.url,offer] as const]:[];
+ }));
+ const details=await searchProductPages("Tuš",[...urls],(html,url)=>{
    const product=structuredProducts(html)[0];
    if(typeof product?.name!=="string")return null;
    const ingredientsTab=html.match(/<li\s+data-id="(\d+)"\s+class="[^"]*\bingredients\b[^"]*"/i)?.[1];
@@ -330,13 +400,15 @@ async function searchTus(q:string){
      offer?.priceCurrency==="EUR"?offer.price:null;
    const regularPrice=typeof price==="number"?price:Number(price)||null;
    const result=makeOffer({store:"Tuš",name,description,brand,...tusProductPricing(html,regularPrice),
-     image:product.image??html.match(/<img class="rsTmb" src="(https:\/\/www\.tus\.si\/app\/images\/[^"]+)"/i)?.[1],url,source:url});
+     image:tusProductPhoto(html,product,url)??photos.get(url),url,source:url});
    if(!result||!/\bbaterij\w*\b/.test(norm(name)))return result;
    const text=norm(name+" "+description);
    const aa=/\b(?:aa|lr6|hr6|r6)\b/.test(text);
    const other=/\b(?:aaa|lr03|hr03|r03|cr\d{4}|gumbn\w*)\b/.test(text);
    return {...result,battery_variant:aa?(other?"mixed":"aa"):other?"other":"unknown"};
- });
+ }).catch(error=>{if(!listed.size)throw error;return [];});
+ for(const offer of details)listed.set(offer.url,offer);
+ return [...listed.values()];
 }
 async function searchEurospin(q:string){
  const url="https://www.eurospin.si/akcije/";
@@ -480,7 +552,7 @@ function preferLidlOffer(previous:LidlOffer|undefined,next:LidlOffer){
   return previous;
 }
 async function searchLidlListings(q:string,upcoming=false){
-  const category=CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.lidl;
+  const category=productType(q)==="laundry"?"/h/ciscenje-gospodinjstev/h10067527":CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.lidl;
   const terms=discoveryTerms(q);
   if(!terms.length)return [];
   const term=/\balpsko\b/.test(norm(q))?"alpsko mleko":terms.join(" ");
@@ -810,14 +882,25 @@ function discoveryTerms(q:string){
   if(kind==="butter-spread")return ["masleni","namaz"];
   if(kind==="poli")return ["poli"];
   if(kind==="beer")return searchWords(q);
-  if(kind==="laundry")return searchWords(q).filter(word=>!["za","pranje","detergent"].includes(word));
+  if(kind==="laundry"){
+    const form=detergentForm(q);
+    const label=form==="powder"?["pralni","prašek"]:form==="liquid"?["tekoči","detergent"]:
+      form==="capsules"?["kapsule","za","pranje","perila"]:["detergent","za","pranje","perila"];
+    return [...label,...laundryTerms(q)];
+  }
   if(kind==="eggs")return ["jajca"];
   return searchWords(q);
 }
 function candidateRank(path:string,q:string,terms:string[],target=parseQuantity(q)){
   const slug=norm(path.split("/").pop()??"");
   const words=new Set(slug.split(" "));
-  const hits=terms.filter(word=>words.has(word)).length;
+  const hits=terms.filter(word=>words.has(norm(word))).length;
+  if(productType(q)==="laundry"){
+    if(productType(slug)!=="laundry")return 0;
+    const form=detergentForm(q),observed=detergentForm(slug);
+    if(form&&observed&&form!==observed)return 0;
+    return 1+Number(Boolean(form&&form===observed))*3+laundryTerms(q).filter(word=>words.has(word)).length;
+  }
   if(greekYogurt(q)){
     if(!greekYogurt(slug))return 0;
     const size=parseQuantity(path);
@@ -836,13 +919,19 @@ async function searchRetailer(store:"Spar"|"Mercator",q:string,target=parseQuant
   const base=spar?"https://online.spar.si":"https://mercatoronline.si";
   const terms=discoveryTerms(q);
   if(!terms.length)return [];
-  const discovery=spar?base+"/search?name="+encodeURIComponent(greekYogurt(q)?"grški":terms.join(" ")):base+"/sitemap.xml";
-  const response=await fetchPublic(discovery);
-  if(!response.ok)throw new Error(store+" HTTP "+response.status);
-  const body=await response.text();
+  const variants=[greekYogurt(q)?"grški":terms.join(" ")];
+  if(spar&&productType(q)==="laundry"&&detergentForm(q)==="liquid")variants.push(["gel za pranje",...laundryTerms(q)].join(" "));
+  const discovery=spar?variants.map(term=>base+"/search?name="+encodeURIComponent(term)):[base+"/sitemap.xml"];
   const mercatorPath=/^https:\/\/mercatoronline\.si(\/izdelek\/\d+\/[a-z0-9-]+)$/;
-  const paths=spar?sparProductPaths(body,q):[...body.matchAll(/<loc>([^<]+)<\/loc>/gi)]
-    .flatMap(m=>m[1].trim().match(mercatorPath)?.[1]??[]);
+  const pages=await Promise.allSettled(discovery.map(async url=>{
+    const response=await fetchPublic(url);
+    if(!response.ok)throw new Error(store+" HTTP "+response.status);
+    const body=await response.text();
+    return spar?sparProductPaths(body,q):[...body.matchAll(/<loc>([^<]+)<\/loc>/gi)]
+      .flatMap(m=>m[1].trim().match(mercatorPath)?.[1]??[]);
+  }));
+  if(pages.every(page=>page.status==="rejected"))throw pages[0].reason;
+  const paths=pages.flatMap(page=>page.status==="fulfilled"?page.value:[]);
   if(!spar&&!paths.length)throw new Error("Mercator: zemljevid nima povezav do izdelkov");
   const candidates=[...new Set(paths)].map(path=>({path,rank:candidateRank(path,q,terms,target)}))
     .filter(p=>p.rank>0).sort((a,b)=>b.rank-a.rank).slice(0,12);
@@ -905,11 +994,20 @@ function typeSubstitution(query:string){
    query:kind==="butter"?"Masleni namaz":"Maslo",reason:"Druga vrsta izdelka",
    rank:(offer:any)=>productType(offer.name)===(kind==="butter"?"butter-spread":"butter")?0.45:Infinity
  };
- if(kind==="laundry"&&detergentForm(query))return {
-   query:["pralni detergent",...laundryTerms(query)].join(" "),reason:"Druga oblika detergenta",
-   rank:(offer:any)=>productType(offer.name)==="laundry"&&detergentForm(offer.name)&&detergentForm(offer.name)!==detergentForm(query)?0.45:Infinity
- };
  return null;
+}
+function laundrySubstitutions(query:string){
+ const requested=detergentForm(query);
+ if(productType(query)!=="laundry"||!requested)return [];
+ const required=laundryTerms(query);
+ return [
+   {form:"powder",label:"pralni prašek",reason:"Pralni prašek"},
+   {form:"liquid",label:"tekoči detergent",reason:"Tekoči detergent"},
+   {form:"capsules",label:"kapsule za pranje perila",reason:"Pralne kapsule"},
+ ].filter(rule=>rule.form!==requested).map(rule=>({
+   query:[rule.label,...required].join(" "),reason:rule.reason,
+   rank:(offer:any)=>(offer.detergent_form??detergentForm(offer.name,offer.unit??""))===rule.form?0.45:Infinity
+ }));
 }
 function packageSubstitution(query:string){
  const target=parseQuantity(query);
@@ -1130,7 +1228,8 @@ async function handleSearch(req:Request){
   if(body.action==="coupons")return await couponResponse();
   const input=String(body.query||"").trim();
   if(input.length<2||input.length>100)throw new Error("Vnesi iskalni niz med 2 in 100 znaki.");
-  const q=/\bjajca\b/i.test(input)&&!parseQuantity(input)&&/\s[1-9]\d{0,2}$/.test(input)?input+" kos":input;
+  const corrected=input.replace(/\bpračni(?=\s+praš)/gi,"pralni");
+  const q=/\bjajca\b/i.test(corrected)&&!parseQuantity(corrected)&&/\s[1-9]\d{0,2}$/.test(corrected)?corrected+" kos":corrected;
   const offers:any[]=[];
   const alternatives:any[]=[];
   const upcoming:any[]=[];
@@ -1159,7 +1258,7 @@ async function handleSearch(req:Request){
             ?[{offer,rank,reason:rule.reason}]:[];
         });
       };
-      const similarSearch=Promise.allSettled([packaging,typeSubstitution(q),store==="Tuš"?battery:null]
+      const similarSearch=Promise.allSettled([packaging,typeSubstitution(q),...laundrySubstitutions(q),store==="Tuš"?battery:null]
         .filter(rule=>rule!==null).map(findAlternatives));
       const [current]=await Promise.allSettled([search(q)]);
       const rows=current.status==="fulfilled"?current.value.filter(row=>row.price_status!=="expired"):[];
@@ -1179,11 +1278,14 @@ async function handleSearch(req:Request){
         const previous=alternativesById.get(key);
         if(!previous||previous.rank>entry.rank)alternativesById.set(key,entry);
       }
-      const similar=[...alternativesById.values()].sort((a,b)=>a.rank-b.rank||a.offer.price-b.offer.price).slice(0,8);
+      const similar=[...alternativesById.values()].sort((a,b)=>a.rank-b.rank||a.offer.price-b.offer.price).slice(0,productType(q)==="laundry"?16:8);
       alternatives.push(...similar.map(({offer,rank,reason})=>({
         ...offer,eligible_for_basket:false,substitution_reason:reason,match_score:Math.round(Math.max(30,Math.min(95,100-rank*100)))
       })));
       const similarCount=similar.length;
+      if(productType(q)==="laundry"&&current.status==="fulfilled"){
+        sources[store]=rows.length+" ujemanj · "+similarCount+" podobnih ponudb";
+      }
       if(exact.length)return;
       if(store==="Lidl"&&!similarCount&&["milk","eggs"].includes(productType(q)??"")){
         try{
