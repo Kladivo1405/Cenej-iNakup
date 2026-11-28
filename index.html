@@ -99,6 +99,7 @@ input::placeholder{color:#a4b0a6}
 .product-info details small,.product-info details a{display:block}
 .product-price{font-size:20px;font-variant-numeric:tabular-nums}
 .offer-badge{color:#c7ff9f;font-weight:750}
+.lidl-plus-price{display:grid;gap:3px;border-left:3px solid #85ace8;background:#182c43;padding:6px 7px;border-radius:4px;color:#edf5ee}
 .offer-note{color:#ffe2b7}
 .product-pick{margin-top:auto;min-height:44px;line-height:1.15;padding:6px}
 .coupon-options{display:grid;gap:8px;margin:10px 0}
@@ -190,10 +191,10 @@ input::placeholder{color:#a4b0a6}
 </form><p id="manualStatus" class="status" role="status"></p></details>
 </div>
 </section>
-<p class="muted" style="text-align:center;font-size:12px">v0.8 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
+<p class="muted" style="text-align:center;font-size:12px">v0.10 · Vir in datum preverjanja nista dokaz, da cena še velja. Pred nakupom preveri ponudbo pri trgovcu.</p>
 <dialog id="offerDialog" class="offer-dialog" aria-labelledby="offerHeading">
  <div class="picker-head"><div class="row"><div><small id="offerStore"></small><h2 id="offerHeading"></h2></div><button id="offerClose" type="button" class="light" aria-label="Zapri ponudbe">Zapri</button></div>
  <div class="picker-controls"><label>Razvrsti <select id="offerSort"><option value="promotion">Najprej akcije</option><option value="unit">Cena na enoto</option><option value="price">Cena pakiranja</option></select></label><button id="offerReset" type="button" class="light">Samodejna izbira</button></div></div>
  <div id="offerGroups"></div>
 </dialog>
-</main><script src="./vendor/supabase/supabase.js"></script><script src="./app.js?v=0.8"></script><script type="module" src="./shared-lists.js"></script></body></html>
+</main><script src="./vendor/supabase/supabase.js"></script><script src="./app.js?v=0.10"></script><script type="module" src="./shared-lists.js"></script></body></html>
