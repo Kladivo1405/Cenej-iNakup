@@ -69,8 +69,15 @@ async function fetchPublic(url:string,extraHeaders:Record<string,string>={}):Pro
   return await fetch(url,{headers:{"User-Agent":UA,"Accept":"application/json,text/html,application/xml,text/xml,*/*",...extraHeaders},signal:AbortSignal.timeout(18000),redirect:"error"});
 }
 function brandName(v:any):string|null { if(!v)return null;if(typeof v==="string")return v;if(Array.isArray(v))return brandName(v[0]);return typeof v.name==="string"?v.name:null; }
-function parseQuantity(text:string):{amount:number;unit:"l"|"kg"|"kos";label:string;count:number;each:number}|null {
+function parseQuantity(text:string):{amount:number;unit:"l"|"kg"|"kos"|"list"|"rol";label:string;count:number;each:number}|null {
   const t=String(text??"").replace(/,/g,".").toLowerCase();
+  const paper=t.match(/\b(?:(\d+)\s*[x×]\s*)?(\d+)\s*(list(?:ov|i|a)?|rol(?:ic[ae]?|e|a)?|zvitk(?:ov|i|a))\b/);
+  if(paper){
+    const count=Number(paper[1]??1),each=Number(paper[2]);
+    if(count<=0||each<=0)return null;
+    const unit=paper[3].startsWith("list")?"list":"rol";
+    return {amount:count*each,unit,label:(count>1?count+" × ":"")+each+(unit==="list"?" listov":" rol"),count,each};
+  }
   const pieces=t.match(/\b(\d+)\s*(?:kos(?:ov|i|a)?\b|kom\b|pieces\b|\/\s*1\b)/);
   if(pieces)return {amount:Number(pieces[1]),unit:"kos",label:pieces[1]+" kos",count:1,each:Number(pieces[1])};
   const multi=t.match(/\b(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(ml|cl|dl|l|g|kg)\b/i);
@@ -147,8 +154,9 @@ function packageQuantity(name:string,weight="",description=""){
  }
  return parseQuantity(name)??parseQuantity(weight)??(productType(name)==="milk"?null:parseQuantity(description));
 }
+const measuredPackage=/\b(?:(?:\d+\s*[x×]\s*)?\d+(?:[.,]\d+)?\s*(?:kg|g|ml|cl|dl|l|kos(?:ov|i|a)?|kom|list(?:ov|i|a)?|rol(?:ic[ae]?|e|a)?|zvitk(?:ov|i|a)))\b/gi;
 function searchWords(q:string){
- return norm(q.replace(/\b\d+(?:[.,]\d+)?\s*(?:kg|g|ml|cl|dl|l|kos(?:ov|i|a)?|kom)\b/gi," "))
+ return norm(q.replace(measuredPackage," "))
    .split(" ").filter(word=>word.length>=3&&/^[a-z]/.test(word)&&!["pak","kos","kom"].includes(word));
 }
 function diaperSize(text:string){
@@ -250,8 +258,9 @@ function makeOffer(input:any){
 function applyBasketEligibility(offer:any,query:string,description=""){
   const requested=parseQuantity(query);
   const matchingPack=Boolean(requested&&sameQuantity(requested,parseQuantity(offer.unit)));
+  const needsDiaperSize=offer.store==="Lidl"&&/\bplenice\b/.test(norm(offer.name))&&!lidlDiaperSize(query);
   const catalogueMatch=offer.store==="Lidl"&&offer.lidl_catalogue_match===true&&(!requested||matchingPack);
-  offer.eligible_for_basket=Boolean(!offer.lidl_plus_only&&!offer.coupon_condition&&offer.price_status==="current"&&
+  offer.eligible_for_basket=Boolean(!needsDiaperSize&&!offer.lidl_plus_only&&!offer.coupon_condition&&offer.price_status==="current"&&
     (catalogueMatch||(matchingPack&&queryMatches(query,offer.name,description,offer.unit??"",offer.brand??""))));
   return offer;
 }
@@ -481,10 +490,11 @@ const CATEGORY_PAGES=[
   {words:/\b(voda|sok|pijaca)\b/,lidl:"/h/pijace/h10071022",hofer:"/izdelki/brezalkoholne-pijace/k/1588161418378250"},
   {words:/\b(jabolka|banane|krompir|cebula|solata)\b/,lidl:"/h/sadje-in-zelenjava/h10071012",hofer:"/izdelki/sadje-in-zelenjava/k/1588161418378150"},
 ] as const;
-type LidlPlusPrice={price:number;from:string;until:string;coupon_required:boolean;percent?:number};
+type LidlPlusPrice={price:number;from:string;until:string;coupon_required:boolean;percent?:number;previous_price?:number};
 type LidlOffer=NonNullable<ReturnType<typeof makeOffer>>&{
   lidl_plus?:LidlPlusPrice; lidl_plus_only?:boolean;
   lidl_catalogue_match?:boolean;
+  lidl_variant?:string; lidl_discount_percent?:number; promotion_note?:string;
   available_from?:string; available_until?:string;
 };
 const lidlBase="https://www.lidl.si";
@@ -508,9 +518,9 @@ function lidlPage(url:string){
 }
 async function lidlCatalogueUrls(){
   const html=await lidlPage(lidlHub);
-  const links=[...html.matchAll(/\bhref="(\/c\/(?:super-ponudba-od-[a-z-]+|deluxe-ponudba|favorina|crni-vikend|crni-teden|store\/lidl-plus)\/a\d+)"/gi)]
+  const links=[...html.matchAll(/\bhref="(\/c\/(?:store\/)?[a-z0-9-]+\/a\d+)"/gi)]
     .map(match=>lidlBase+match[1]);
-  return [...new Set(links)].slice(0,10);
+  return [...new Set(links)].slice(0,16);
 }
 function wineWords(q:string){return /\bvin(?:o|a|om|u)\b/.test(norm(q));}
 function lidlWineMatch(query:string,name:string,description:string,category:unknown,brand:string){
@@ -520,6 +530,10 @@ function lidlWineMatch(query:string,name:string,description:string,category:unkn
   if(/\b(?:kis|kislin\w*|vino za kuhanje)\b/.test(norm(name)))return false;
   const actual=new Set(info.split(" "));
   return searchWords(query).filter(word=>!/^vin(?:o|a|om|u)$/.test(word)).every(word=>actual.has(word));
+}
+function lidlDiscountPercent(record:any){
+  const percent=record?.discount?.percentageDiscount;
+  return record?.discount?.showPercentage===true&&Number.isFinite(percent)&&percent>0&&percent<100?percent:undefined;
 }
 function lidlPlusPrice(product:any,starts:number|null,ends:number|null,now:number):{price:LidlPlusPrice;weight:string}|null{
   if(starts===null||ends===null)return null;
@@ -537,10 +551,11 @@ function lidlPlusPrice(product:any,starts:number|null,ends:number|null,now:numbe
   if(!packaging||ambiguous(weight)||ambiguous(regionalWeight)||!sameQuantity(packaging,parseQuantity(regionalWeight)))return null;
   const from=Math.max(starts,Date.parse(record.startDate)),until=Math.min(ends,Date.parse(record.endDate));
   if(!Number.isFinite(from)||!Number.isFinite(until)||from>now||until<now)return null;
-  const percent=record.discount?.percentageDiscount;
+  const previous=Number(record.oldPrice??record.discount?.deletedPrice);
   return {weight,price:{
     price:record.price,from:new Date(from).toISOString(),until:new Date(until).toISOString(),coupon_required:/kupon/i.test(terms),
-    ...(record.discount?.showPercentage===true&&Number.isFinite(percent)&&percent>0&&percent<100?{percent}:{})
+    percent:lidlDiscountPercent(record),
+    ...(Number.isFinite(previous)&&previous>record.price?{previous_price:previous}:{})
   }};
 }
 function preferLidlOffer(previous:LidlOffer|undefined,next:LidlOffer){
@@ -556,37 +571,89 @@ function preferLidlOffer(previous:LidlOffer|undefined,next:LidlOffer){
   if(samePack&&next.lidl_plus&&!previous.lidl_plus)return {...previous,lidl_plus:next.lidl_plus};
   return previous;
 }
-const soupVegetables=/\b(?:jusn\w* zelenjav\w*|zelenjav\w* za juho|jusn\w* mesanic\w*)\b/;
-function lidlSoupVegetableMatch(query:string,name:string,brand:string){
+const lidlProductAliases=[
+  {words:/\b(?:jusn\w* zelenjav\w*|zelenjav\w* za juho|jusn\w* mesanic\w*)\b/,label:"jušna zelenjava",
+    categories:["/h/sadje-in-zelenjava/h10071012","/h/zamrznjena-hrana-zamrznjena-hrana/h10071049"],
+    exclude:/\b(?:kock\w*|osnov\w*|zacin\w*)\b/},
+  {words:/\b(?:(?:kuhinjsk\w*|papirnat\w*)\s+(?:papirnat\w*\s+)?brisac\w*|papir za kuhinjo)\b/,label:"kuhinjske brisače",
+    categories:["/h/higienicni-papir/h10096290"],exclude:/\b(?:vlazn\w*|tekstiln\w*)\b/},
+  {words:/\b(?:toaletn\w* papir\w*|wc (?:papir\w*|rolic\w*)|papir za wc)\b/,label:"toaletni papir",
+    categories:["/h/higienicni-papir/h10096290"],exclude:/\bvlazn\w*\b/},
+  {words:/\b(?:zobn\w* (?:past\w*|krem\w*)|past\w* za zobe)\b/,label:"zobna pasta",categories:["/h/zdravje-in-lepota/h10096275"]},
+  {words:/\b(?:set\s+|paket\s+)?krp\w*\s+(?:(?:iz|z)\s+)?mikrovlak\w*\b/,label:"krpe iz mikrovlaken",
+    categories:["/h/ciscenje-gospodinjstev/h10067527"]},
+  {words:/\btekocin\w* za (?:(?:pranje|ciscenje) )?(?:(?:avtomobilsk\w*|vetrobransk\w*) )?(?:stekl\w*|brisalc\w*)\b/,
+    label:"tekočina za vetrobransko steklo",categories:["/h/avto-in-motorno-kolo/h10067538"],
+    title:/\b(?:vetrobransk\w*|brisalc\w*|avtomobilsk\w*)\b/},
+  {words:/\bkrem\w* za rok\w*\b/,label:"krema za roke",categories:["/h/zdravje-in-lepota/h10096275"]},
+];
+function lidlAlias(query:string){return lidlProductAliases.find(rule=>rule.words.test(norm(query)));}
+function lidlDiaperSize(query:string){
+  if(!/\bplenice\b/.test(norm(query)))return null;
+  return diaperSize(query)??norm(query.replace(measuredPackage," ")).match(/ ([1-8])$/)?.[1]??null;
+}
+function lidlProductMatches(query:string,name:string,details:string,weight:string,brand:string,category?:string){
+  if(wineWords(query))return lidlWineMatch(query,name,details,category,brand);
+  const diaper=lidlDiaperSize(query);
+  if(diaper&&diaperSize(name)!==diaper)return false;
+  const rule=lidlAlias(query);
+  if(!rule)return queryMatches(query,name,details,weight,brand);
   const title=norm(name);
-  if(!soupVegetables.test(title)||/\b(?:kock\w*|osnov\w*|zacin\w*|juha v vrecki)\b/.test(title))return false;
-  const words=new Set(norm(name+" "+brand).split(" "));
-  return searchWords(query)
-    .filter(word=>!/^(jusn\w*|zelenjav\w*|mesanic\w*|za|juho)$/.test(word))
-    .every(word=>words.has(word));
+  if(!rule.words.test(title)||rule.exclude?.test(title)||rule.title&&!rule.title.test(title))return false;
+  const words=new Set(norm(name+" "+brand+" "+details+" "+weight).split(" "));
+  const qualifiers=norm(query.replace(measuredPackage," ")).replace(rule.words," ").split(" ")
+    .filter(word=>word.length>=3||word==="w5"||/^\d+$/.test(word));
+  return qualifiers.every(word=>words.has(word));
+}
+function lidlCategories(q:string){
+  const alias=lidlAlias(q);
+  if(alias)return alias.categories;
+  if(productType(q)==="laundry")return ["/h/ciscenje-gospodinjstev/h10067527","/h/pranje-in-likanje/h10067528"];
+  if(/\bplenice\b/.test(norm(q)))return ["/h/dojencki-in-otroci/h10096283","/h/higiena-za-zenske-in-dojencke/h10096280"];
+  if(/\b(nutella|lesnikov namaz)\b/.test(norm(q)))return ["/h/kosmici-in-namazi/h10096153"];
+  const category=CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.lidl;
+  return category?[category]:[];
+}
+// This entry is printed on page 24 but has no product tile in Lidl's public listing.
+const lidlPrintedOffers=[{
+  name:"Zobna pasta Complete Protection",brand:"Sensodyne",weight:"75 ml",price:4.65,
+  from:"2026-11-26",until:"2026-12-02",
+  source:lidlBase+"/l/sl/katalog/lidlov-katalog-2026-kw48/view/flyer/page/24"
+}];
+function lidlPrintedMatches(q:string){
+  const day=slovenianDay.format(new Date());
+  const requested=parseQuantity(q);
+  return lidlPrintedOffers.flatMap(row=>{
+    if(day<row.from||day>row.until||!lidlProductMatches(q,row.name,"",row.weight,row.brand)||
+      requested&&!sameQuantity(requested,parseQuantity(row.weight)))return [];
+    const offer=makeOffer({...row,store:"Lidl",url:row.source,priceValidUntil:row.until});
+    return offer?[{...offer,lidl_catalogue_match:true}]:[];
+  });
 }
 async function searchLidlListings(q:string,upcoming=false){
-  const category=CATEGORY_PAGES.find(entry=>entry.words.test(norm(q)))?.lidl;
-  const categories=productType(q)==="laundry"
-    ?["/h/ciscenje-gospodinjstev/h10067527","/h/pranje-in-likanje/h10067528"]
-    :soupVegetables.test(norm(q))
-      ?["/h/sadje-in-zelenjava/h10071012","/h/zamrznjena-hrana-zamrznjena-hrana/h10071049"]
-      :/\b(nutella|lesnikov namaz)\b/.test(norm(q))
-        ?["/h/kosmici-in-namazi/h10096153"]
-        :category?[category]:[];
+  const categories=lidlCategories(q);
   const terms=discoveryTerms(q);
   if(!terms.length)return [];
-  const term=/\balpsko\b/.test(norm(q))?"alpsko mleko":terms.join(" ");
+  const alias=lidlAlias(q);
+  const term=/\balpsko\b/.test(norm(q))?"alpsko mleko":alias?.label??terms.join(" ");
   const search=lidlBase+"/q/search?q="+encodeURIComponent(term);
   const catalogue=await lidlCatalogueUrls().catch(()=>[]);
   const urls=[...catalogue,...categories.map(path=>lidlBase+path),...(upcoming?[]:[search])];
   const pages=await Promise.allSettled(urls.map(async url=>lidlGridOffers(await lidlPage(url),url,q,upcoming)));
   const offers=new Map<string,LidlOffer>();
+  if(!upcoming)for(const offer of lidlPrintedMatches(q))offers.set(offer.url,offer);
   for(const page of pages)if(page.status==="fulfilled")for(const offer of page.value){
     offers.set(offer.url,preferLidlOffer(offers.get(offer.url),offer));
   }
-  if(pages.every(page=>page.status==="rejected"))throw new Error("Lidl: javne strani trenutno nedosegljive");
+  if(!offers.size&&pages.every(page=>page.status==="rejected"))throw new Error("Lidl: javne strani trenutno nedosegljive");
   return [...offers.values()];
+}
+function matchesToiletRolls(name:string,weight:string,description:string){
+  if(!/\btoaletni papir\b/.test(norm(name)))return null;
+  const rolls=parseQuantity(description);
+  const sheets=parseQuantity(weight);
+  if(rolls?.unit==="rol"&&sheets?.unit==="list"&&rolls.amount===sheets.count)return rolls.label;
+  return null;
 }
 function lidlGridOffers(html:string,url:string,q?:string,upcoming=false,now=Date.now()){
   const tiles=[...html.matchAll(/\bdata-grid-data="([^"]+)"/g)];
@@ -616,30 +683,38 @@ function lidlGridOffers(html:string,url:string,q?:string,upcoming=false,now=Date
     const plus=upcoming?null:lidlPlusPrice(p,starts,ends,now);
     if(publicPrice===null&&!plus)continue;
     const details=plainText(p.keyfacts?.description??"");
+    const accessibility=plainText(p.imageList_V2?.[0]?.accessibility??"");
     const regularWeight=plainText(p.price?.packaging?.text??region?.packaging?.text??"");
-    const weight=publicPrice===null?plus!.weight:regularWeight;
-    const brand=brandName(p.brand);
+    const rolls=matchesToiletRolls(p.fullTitle,regularWeight,accessibility);
+    const weight=publicPrice===null?plus!.weight:rolls??regularWeight;
+    const brand=brandName(p.brand)??(path==="/p/toaletni-papir/p11258202"&&rolls==="24 rol"?"Violeta":null);
     const name=productType(p.fullTitle)==="milk"?milkDisplayName(p.fullTitle,details):p.fullTitle;
+    const size=/\bplenice\b/.test(norm(name))?norm(accessibility+" "+details).match(/\bvelikost(?:i)? ([1-8])\b/)?.[1]:null;
+    const variant=size?"Velikost "+size:/\bkrema za roke\b/.test(norm(p.fullTitle))?details||undefined:undefined;
     const quantity=packageQuantity(name,weight);
-    const matches=!q||(wineWords(q)
-      ?lidlWineMatch(q,name,details,p.keyfacts?.wonCategoryPrimary,brand??"")
-      :soupVegetables.test(norm(q))
-        ?lidlSoupVegetableMatch(q,name,brand??"")
-        :queryMatches(q,name,details,weight,brand??""));
+    const matches=!q||lidlProductMatches(q,[name,variant].filter(Boolean).join(" "),
+      details+" "+accessibility,weight,brand??"",p.keyfacts?.wonCategoryPrimary);
     if(q&&/\bnutella\b/.test(norm(q))&&!/\b(?:sladoled|keks\w*|piskot\w*|biskvit\w*|rogljic\w*)\b/.test(norm(q))&&
       /\b(?:sladoled|keks\w*|piskot\w*|biskvit\w*|rogljic\w*)\b/.test(norm(name)))continue;
     if(!matches||requested&&!sameQuantity(requested,quantity))continue;
     if(p.multipack===true&&(!quantity||quantity.count===1))continue;
     const publicEnds=ends!==null&&Number.isFinite(regionEnds)?Math.min(ends,regionEnds):ends;
+    const bundle=plainText(region?.discount?.discountText??"").match(/^(?:(\d+)\s*\+\s*)?(\d+)(?:\s+kos(?:ov)?)?\s+gratis\**$/i);
+    const free=bundle?Number(bundle[2]):0;
+    const paid=bundle?.[1]?Number(bundle[1]):(quantity?.count??0)-free;
+    const bundleLabel=paid>0&&free>0&&quantity?.count===paid+free?paid+" + "+free+" gratis":undefined;
     const offer=makeOffer({store:"Lidl",name,brand,weight,price:publicPrice??plus?.price.price,
-      regularPrice:p.price.oldPrice?.price??p.price.oldPrice,priceValidUntil:publicPrice===null?plus?.price.until:!upcoming&&publicEnds?new Date(publicEnds).toISOString():null,
-      promotion:Boolean(p.price.oldPrice),image:p.imageList_V2?.[0]?.variants?.find((v:any)=>v.ratio==="4:3")?.sizes?.mediumUrl??p.image??p.imageList?.[0],url:lidlBase+path,source:url});
+      regularPrice:p.price.oldPrice?.price??p.price.oldPrice??region?.discount?.deletedPrice,priceValidUntil:publicPrice===null?plus?.price.until:!upcoming&&publicEnds?new Date(publicEnds).toISOString():null,
+      promotion:Boolean(p.price.oldPrice||lidlDiscountPercent(region)||bundleLabel),image:p.imageList_V2?.[0]?.variants?.find((v:any)=>v.ratio==="4:3")?.sizes?.mediumUrl??p.image??p.imageList?.[0],url:lidlBase+path,source:url});
     if(!offer)continue;
     const confirmedPublicPrice=publicPrice!==null&&region?.currencyCode==="EUR"&&region.price===publicPrice&&
       !region.variantsHaveDifferentPrices&&Date.parse(region.startDate)<=now&&regionEnds>=now&&
       !p.price.discount?.showFrom&&!region.discount?.showFrom;
     const row:LidlOffer={...offer,
       ...(q&&!upcoming&&quantity&&starts!==null&&publicEnds!==null&&confirmedPublicPrice?{lidl_catalogue_match:true}:{}),
+      lidl_variant:variant,
+      lidl_discount_percent:confirmedPublicPrice?lidlDiscountPercent(region):undefined,
+      promotion_note:confirmedPublicPrice&&offer.promotion?bundleLabel:undefined,
       ...(plus&&quantity&&sameQuantity(quantity,parseQuantity(plus.weight))?{lidl_plus:plus.price,lidl_plus_only:publicPrice===null}:{}),
       ...(upcoming&&starts!==null&&ends!==null?{available_from:new Date(starts).toISOString(),available_until:new Date(ends).toISOString()}:{}),
     };
@@ -654,7 +729,7 @@ function milkDisplayName(name:string,details:string){
 }
 async function searchSitemap(store:"Lidl"|"Hofer",q:string){
   const dairy=["milk","butter","eggs"].includes(productType(q)??"");
-  if(store==="Lidl"&&(dairy||wineWords(q)))return await searchLidlListings(q);
+  if(store==="Lidl"&&(dairy||wineWords(q)||lidlAlias(q)))return await searchLidlListings(q);
   const [details,listings]=await Promise.allSettled([
     searchCatalogDetails(store,q),
     store==="Lidl"?searchLidlListings(q):searchHoferListings(q)
@@ -1041,7 +1116,8 @@ function laundrySubstitutions(query:string){
 function packageSubstitution(query:string){
  const target=parseQuantity(query);
  if(!target)return null;
- const relaxed=query.replace(/\b(?:\d+\s*[x×]\s*)?\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l)\b(?:\s*[x×]\s*\d+\b)?|\b\d+\s*(?:kos(?:ov|i|a)?\b|kom\b|pieces\b|\/\s*1\b)/i,"").replace(/\s+/g," ").trim();
+ const relaxed=query.replace(/\b\d+(?:[,.]\d+)?\s*(?:kg|g|ml|cl|dl|l)\s*[x×]\s*\d+\b|\b\d+\s*(?:pieces\b|\/\s*1\b)/i," ")
+   .replace(measuredPackage," ").replace(/\s+/g," ").trim();
  if(relaxed===query||!discoveryTerms(relaxed).length)return null;
  const eggs=productType(query)==="eggs";
  return {query:relaxed,reason:"Druga velikost pakiranja",rank:(offer:any)=>{
@@ -1049,7 +1125,7 @@ function packageSubstitution(query:string){
    if(!size||size.unit!==target.unit||sameQuantity(target,size))return Infinity;
    if(eggs&&/\b(?:testenine|rezanci|namaz|sendvic|pecivo)\b/.test(norm(offer.name)))return Infinity;
    const difference=Math.abs(size.amount-target.amount)/target.amount;
-   if(!eggs&&difference>0.35)return Infinity;
+   if(!eggs&&difference>0.35&&!(offer.store==="Lidl"&&lidlAlias(query)))return Infinity;
    return difference+(size.count!==target.count?0.1:0);
  }};
 }
